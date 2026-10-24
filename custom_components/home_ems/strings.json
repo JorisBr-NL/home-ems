@@ -22,8 +22,12 @@
   },
   "entity": {
     "binary_sensor": {
-      "heat_pump_running": { "name": "Heat pump running" },
-      "peak_window": { "name": "Evening peak window" }
+      "heat_pump_running": {
+        "name": "Heat pump running"
+      },
+      "peak_window": {
+        "name": "Evening peak window"
+      }
     },
     "sensor": {
       "advice": {
@@ -36,10 +40,33 @@
           "wait": "Wait"
         }
       },
-      "floor_margin": { "name": "Floor margin" },
-      "pv_surplus": { "name": "PV surplus" },
-      "runs_today": { "name": "Runs today" },
-      "short_runs_today": { "name": "Short runs today" }
+      "floor_margin": {
+        "name": "Floor margin"
+      },
+      "pv_surplus": {
+        "name": "PV surplus"
+      },
+      "runs_today": {
+        "name": "Runs today"
+      },
+      "short_runs_today": {
+        "name": "Short runs today"
+      },
+      "run_advised": {
+        "name": "Run advised"
+      },
+      "unadvised_starts_today": {
+        "name": "Starts without advice today"
+      },
+      "advised_run_minutes_today": {
+        "name": "Advised run minutes today (heat pump off)"
+      },
+      "running_minutes_today": {
+        "name": "Running minutes today"
+      },
+      "pv_running_minutes_today": {
+        "name": "Running minutes on PV today"
+      }
     }
   }
 }

@@ -1,6 +1,6 @@
 """Home EMS: energy management for the heat pump, appliances and (later) a battery.
 
-Version 0.1 runs in observation mode only: it reads sensors and publishes what it
+Version 0.2 runs in observation mode only: it reads sensors and publishes what it
 would do, but never writes to devices.
 """
 from __future__ import annotations
