@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Home EMS",
+        "description": "Kies de entiteiten die Home EMS uitleest. Versie 0.1 draait in observatiemodus en verandert niets aan je apparaten.",
+        "data": {
+          "living_climate": "Thermostaat woonkamer (master)",
+          "kitchen_climate": "Thermostaat keuken",
+          "heat_pump_power": "Elektrisch vermogen warmtepomp (een of meer sensoren)",
+          "flow_temperature": "Flowmetertemperatuur (vloerwater)",
+          "flow_rate": "Debiet flowmeter",
+          "grid_power": "Netvermogen (positief = afname, negatief = teruglevering)",
+          "outside_temperature": "Buitentemperatuur",
+          "chill_climate": "Quatt Chill"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Home EMS is al ingesteld."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "heat_pump_running": { "name": "Warmtepomp draait" },
+      "peak_window": { "name": "Avondpiekvenster" }
+    },
+    "sensor": {
+      "advice": {
+        "name": "Advies",
+        "state": {
+          "unknown": "Onbekend",
+          "run": "Run starten",
+          "keep_running": "Laten doorlopen",
+          "running": "Draait",
+          "wait": "Wachten"
+        }
+      },
+      "floor_margin": { "name": "Vloermarge" },
+      "pv_surplus": { "name": "PV-overschot" },
+      "runs_today": { "name": "Runs vandaag" },
+      "short_runs_today": { "name": "Korte runs vandaag" }
+    }
+  }
+}

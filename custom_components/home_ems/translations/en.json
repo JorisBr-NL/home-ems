@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Home EMS",
+        "description": "Choose the entities Home EMS reads. Version 0.1 runs in observation mode and never changes your devices.",
+        "data": {
+          "living_climate": "Living room thermostat (master)",
+          "kitchen_climate": "Kitchen thermostat",
+          "heat_pump_power": "Heat pump electrical power (one or more sensors)",
+          "flow_temperature": "Flowmeter temperature (floor water)",
+          "flow_rate": "Flowmeter flow rate",
+          "grid_power": "Grid power (positive = import, negative = export)",
+          "outside_temperature": "Outside temperature",
+          "chill_climate": "Quatt Chill"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Home EMS is already configured."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "heat_pump_running": { "name": "Heat pump running" },
+      "peak_window": { "name": "Evening peak window" }
+    },
+    "sensor": {
+      "advice": {
+        "name": "Advice",
+        "state": {
+          "unknown": "Unknown",
+          "run": "Start a run",
+          "keep_running": "Keep running",
+          "running": "Running",
+          "wait": "Wait"
+        }
+      },
+      "floor_margin": { "name": "Floor margin" },
+      "pv_surplus": { "name": "PV surplus" },
+      "runs_today": { "name": "Runs today" },
+      "short_runs_today": { "name": "Short runs today" }
+    }
+  }
+}
