@@ -6,6 +6,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
@@ -20,6 +21,9 @@ from .const import (
 from .model import Evaluation, Inputs, RunTracker, evaluate
 
 _LOGGER = logging.getLogger(__name__)
+
+STORAGE_VERSION = 1
+SAVE_DELAY = 60  # seconds
 
 type HomeEmsConfigEntry = ConfigEntry[HomeEmsCoordinator]
 
@@ -38,6 +42,15 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             update_interval=UPDATE_INTERVAL,
         )
         self.tracker = RunTracker()
+        self._store: Store[dict] = Store(
+            hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}.tracker"
+        )
+
+    async def _async_setup(self) -> None:
+        """Restore run state and day counters from the previous run of HA."""
+        stored = await self._store.async_load()
+        if stored:
+            self.tracker = RunTracker.from_dict(stored, dt_util.now())
 
     def _float_state(self, entity_id: str | None) -> float | None:
         if not entity_id:
@@ -77,4 +90,6 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         )
 
     async def _async_update_data(self) -> Evaluation:
-        return evaluate(self.read_inputs(), self.tracker, dt_util.now())
+        evaluation = evaluate(self.read_inputs(), self.tracker, dt_util.now())
+        self._store.async_delay_save(self.tracker.to_dict, SAVE_DELAY)
+        return evaluation

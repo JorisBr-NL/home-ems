@@ -11,7 +11,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfPower, UnitOfTemperature
+from homeassistant.const import UnitOfPower, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -48,14 +48,41 @@ SENSORS: tuple[HomeEmsSensorDescription, ...] = (
         value_fn=lambda c: c.data.pv_surplus_w,
     ),
     HomeEmsSensorDescription(
+        # 1 while the EMS advises starting a run, else 0; its 5-minute mean is the
+        # share of time a run was advised, which the energy export can pick up.
+        key="run_advised",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c: int(c.data.advice is Advice.RUN),
+    ),
+    HomeEmsSensorDescription(
         key="runs_today",
         state_class=SensorStateClass.TOTAL_INCREASING,
-        value_fn=lambda c: c.tracker.runs_today,
+        value_fn=lambda c: c.tracker.stats.runs,
     ),
     HomeEmsSensorDescription(
         key="short_runs_today",
         state_class=SensorStateClass.TOTAL_INCREASING,
-        value_fn=lambda c: c.tracker.short_runs_today,
+        value_fn=lambda c: c.tracker.stats.short_runs,
+    ),
+    HomeEmsSensorDescription(
+        key="unadvised_starts_today",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.tracker.stats.unadvised_starts,
+    ),
+    *(
+        HomeEmsSensorDescription(
+            key=key,
+            device_class=SensorDeviceClass.DURATION,
+            native_unit_of_measurement=UnitOfTime.MINUTES,
+            state_class=SensorStateClass.TOTAL_INCREASING,
+            suggested_display_precision=0,
+            value_fn=lambda c, attr=attr: round(getattr(c.tracker.stats, attr), 1),
+        )
+        for key, attr in (
+            ("advised_run_minutes_today", "advised_run_minutes"),
+            ("running_minutes_today", "running_minutes"),
+            ("pv_running_minutes_today", "pv_running_minutes"),
+        )
     ),
 )
 

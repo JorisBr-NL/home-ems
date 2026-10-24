@@ -64,18 +64,96 @@ def test_peak_window_waits_unless_floor_far_below():
 def test_keep_running_until_minimum_then_running():
     tracker = RunTracker()
     start = at(13)
+    evaluate(inputs(power=5), tracker, start - timedelta(minutes=1))
     assert evaluate(inputs(power=400), tracker, start).advice is Advice.KEEP_RUNNING
     assert evaluate(inputs(power=400), tracker, start + timedelta(minutes=29)).advice is Advice.KEEP_RUNNING
     assert evaluate(inputs(power=400), tracker, start + timedelta(minutes=30)).advice is Advice.RUNNING
 
 
+def test_run_going_at_startup_is_not_a_start():
+    tracker = RunTracker()
+    result = evaluate(inputs(power=400), tracker, at(21))
+    assert result.advice is Advice.RUNNING
+    assert tracker.stats.runs == 0
+    # its end is not counted as a short run either (start unknown)
+    evaluate(inputs(power=5), tracker, at(21, 10))
+    assert tracker.stats.short_runs == 0
+
+
+def test_floor_margin_only_at_rest():
+    tracker = RunTracker()
+    assert evaluate(inputs(power=400, flow=26.0, living=19.5), tracker, at(9)).floor_margin is None
+    assert evaluate(inputs(power=5, flow=21.0, living=19.5), tracker, at(9, 5)).floor_margin == 1.5
+
+
+def step(tracker, minutes_from, minutes_to, **kw):
+    for m in range(minutes_from, minutes_to):
+        evaluate(inputs(**kw), tracker, at(10) + timedelta(minutes=m))
+
+
 def test_run_tracker_counts_runs_and_short_runs_and_resets_daily():
     tracker = RunTracker()
-    t = at(8)
-    for running, minutes in [(True, 0), (False, 10), (True, 20), (False, 80)]:
-        tracker.update(running, t + timedelta(minutes=minutes))
-    assert tracker.runs_today == 2
-    assert tracker.short_runs_today == 1
-    tracker.update(False, t + timedelta(days=1))
-    assert tracker.runs_today == 0
-    assert tracker.short_runs_today == 0
+    step(tracker, 0, 1, power=5)
+    step(tracker, 1, 11, power=400)    # 10 min run -> short
+    step(tracker, 11, 20, power=5)
+    step(tracker, 20, 80, power=400)   # 60 min run
+    step(tracker, 80, 81, power=5)
+    assert tracker.stats.runs == 2
+    assert tracker.stats.short_runs == 1
+    evaluate(inputs(power=5), tracker, at(10) + timedelta(days=1))
+    assert tracker.stats.runs == 0
+    assert tracker.stats.short_runs == 0
+
+
+def test_comparison_counters():
+    tracker = RunTracker()
+    # 10 min: floor below margin, heat pump off -> run advised
+    step(tracker, 0, 11, power=5, flow=19.8, living=19.5)
+    assert round(tracker.stats.advised_run_minutes) == 10
+    # start follows the advice -> not unadvised
+    step(tracker, 11, 21, power=400, grid=-500)
+    assert tracker.stats.unadvised_starts == 0
+    # each interval counts for the state at its end, so the start minute counts as running
+    assert round(tracker.stats.running_minutes) == 10
+    assert round(tracker.stats.pv_running_minutes) == 10
+    # rest with floor ok (advice wait), then a start -> unadvised
+    step(tracker, 21, 41, power=5, flow=21.0, living=19.5)
+    step(tracker, 41, 45, power=400)
+    assert tracker.stats.unadvised_starts == 1
+
+
+def test_gaps_longer_than_max_step_are_not_counted():
+    tracker = RunTracker()
+    evaluate(inputs(power=400), tracker, at(10))
+    evaluate(inputs(power=400), tracker, at(11))
+    assert tracker.stats.running_minutes == 0
+
+
+def test_restore_after_short_restart_keeps_run_and_counters():
+    tracker = RunTracker()
+    step(tracker, 0, 1, power=5)
+    step(tracker, 1, 21, power=400)
+    data = tracker.to_dict()
+    restored = RunTracker.from_dict(data, at(10, 25))
+    assert restored.stats.runs == 1
+    assert restored.run_start == at(10, 1)
+    assert evaluate(inputs(power=400), restored, at(10, 26)).advice is Advice.KEEP_RUNNING
+    assert restored.stats.runs == 1
+
+
+def test_restore_after_long_restart_keeps_counters_only():
+    tracker = RunTracker()
+    step(tracker, 0, 1, power=5)
+    step(tracker, 1, 21, power=400)
+    restored = RunTracker.from_dict(tracker.to_dict(), at(12))
+    assert restored.stats.runs == 1
+    assert evaluate(inputs(power=400), restored, at(12)).advice is Advice.RUNNING
+    assert restored.stats.runs == 1
+
+
+def test_restore_on_next_day_resets_counters():
+    tracker = RunTracker()
+    step(tracker, 0, 1, power=5)
+    step(tracker, 1, 21, power=400)
+    restored = RunTracker.from_dict(tracker.to_dict(), at(10) + timedelta(days=1))
+    assert restored.stats.runs == 0

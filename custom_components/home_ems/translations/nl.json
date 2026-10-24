@@ -22,8 +22,12 @@
   },
   "entity": {
     "binary_sensor": {
-      "heat_pump_running": { "name": "Warmtepomp draait" },
-      "peak_window": { "name": "Avondpiekvenster" }
+      "heat_pump_running": {
+        "name": "Warmtepomp draait"
+      },
+      "peak_window": {
+        "name": "Avondpiekvenster"
+      }
     },
     "sensor": {
       "advice": {
@@ -36,10 +40,33 @@
           "wait": "Wachten"
         }
       },
-      "floor_margin": { "name": "Vloermarge" },
-      "pv_surplus": { "name": "PV-overschot" },
-      "runs_today": { "name": "Runs vandaag" },
-      "short_runs_today": { "name": "Korte runs vandaag" }
+      "floor_margin": {
+        "name": "Vloermarge"
+      },
+      "pv_surplus": {
+        "name": "PV-overschot"
+      },
+      "runs_today": {
+        "name": "Runs vandaag"
+      },
+      "short_runs_today": {
+        "name": "Korte runs vandaag"
+      },
+      "run_advised": {
+        "name": "Run geadviseerd"
+      },
+      "unadvised_starts_today": {
+        "name": "Starts zonder advies vandaag"
+      },
+      "advised_run_minutes_today": {
+        "name": "Adviesminuten run vandaag (warmtepomp uit)"
+      },
+      "running_minutes_today": {
+        "name": "Draaiminuten vandaag"
+      },
+      "pv_running_minutes_today": {
+        "name": "Draaiminuten op PV vandaag"
+      }
     }
   }
 }
