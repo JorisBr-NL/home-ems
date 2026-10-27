@@ -11,9 +11,10 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfPower, UnitOfTemperature, UnitOfTime
+from homeassistant.const import UnitOfEnergy, UnitOfPower, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from .coordinator import HomeEmsConfigEntry, HomeEmsCoordinator
 from .entity import HomeEmsEntity
@@ -23,6 +24,32 @@ from .model import Advice
 @dataclass(frozen=True, kw_only=True)
 class HomeEmsSensorDescription(SensorEntityDescription):
     value_fn: Callable[[HomeEmsCoordinator], Any]
+    attrs_fn: Callable[[HomeEmsCoordinator], dict[str, Any]] | None = None
+
+
+def _next_run(c: HomeEmsCoordinator):
+    return c.plan.next_run(dt_util.now()) if c.plan else None
+
+
+def _plan_attrs(c: HomeEmsCoordinator) -> dict[str, Any]:
+    p = c.plan
+    if p is None:
+        return {"status": c.plan_status, "mode": "observation"}
+    nxt = _next_run(c)
+    return {
+        "status": c.plan_status,
+        "mode": "observation",
+        "end": nxt.end.isoformat() if nxt else None,
+        "reason": nxt.reason if nxt else None,
+        "pv_share": round(nxt.pv_share, 2) if nxt else None,
+        "horizon_end": p.horizon_end.isoformat(),
+        "run_hours": round(p.run_hours, 2),
+        "heat_need_kwh": p.heat_need_kwh,
+        "expected_cost": p.expected_cost,
+        "baseline_cost": p.baseline_cost,
+        "made": p.made.isoformat(),
+        "runs": [r.to_dict() for r in p.runs],
+    }
 
 
 SENSORS: tuple[HomeEmsSensorDescription, ...] = (
@@ -31,6 +58,31 @@ SENSORS: tuple[HomeEmsSensorDescription, ...] = (
         device_class=SensorDeviceClass.ENUM,
         options=[a.value for a in Advice],
         value_fn=lambda c: c.data.advice.value,
+        attrs_fn=lambda c: {"reason": c.data.reason, "mode": "observation",
+                            "plan_says_run": bool(c.plan and c.plan.running_now(dt_util.now()))},
+    ),
+    # --- day planner (v0.3)
+    HomeEmsSensorDescription(
+        key="plan_next_run",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_fn=lambda c: r.start if (r := _next_run(c)) else None,
+        attrs_fn=_plan_attrs,
+    ),
+    HomeEmsSensorDescription(
+        key="plan_heat_need",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        suggested_display_precision=1,
+        value_fn=lambda c: c.plan.heat_need_kwh if c.plan else None,
+    ),
+    HomeEmsSensorDescription(
+        key="plan_expected_cost",
+        device_class=SensorDeviceClass.MONETARY,
+        native_unit_of_measurement="EUR",
+        suggested_display_precision=2,
+        value_fn=lambda c: c.plan.expected_cost if c.plan else None,
+        attrs_fn=lambda c: {"baseline_cost": c.plan.baseline_cost,
+                            "savings": round(c.plan.savings, 3)} if c.plan else {},
     ),
     HomeEmsSensorDescription(
         key="floor_margin",
@@ -97,6 +149,7 @@ async def async_setup_entry(
 
 
 class HomeEmsSensor(HomeEmsEntity, SensorEntity):
+    _unrecorded_attributes = frozenset({"runs"})
     entity_description: HomeEmsSensorDescription
 
     def __init__(
@@ -111,6 +164,5 @@ class HomeEmsSensor(HomeEmsEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
-        if self.entity_description.key != "advice":
-            return None
-        return {"reason": self.coordinator.data.reason, "mode": "observation"}
+        fn = self.entity_description.attrs_fn
+        return fn(self.coordinator) if fn else None
