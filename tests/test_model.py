@@ -39,9 +39,26 @@ def test_wait_when_floor_ok_and_no_surplus():
 
 
 def test_run_when_floor_below_margin():
-    result = evaluate(inputs(flow=19.8, living=19.5), RunTracker(), at(10))
+    result = evaluate(inputs(flow=19.6, living=19.3), RunTracker(), at(10))
     assert result.advice is Advice.RUN
     assert "floor" in result.reason
+
+
+def test_no_floor_run_when_living_room_warm():
+    # 26 Oct 2026, 20:55: flowmeter 19.9 C, living room 19.8 C (comfort 19.0 C)
+    result = evaluate(inputs(flow=19.9, living=19.8), RunTracker(), at(20, 55))
+    assert result.advice is Advice.WAIT
+    assert "warm enough" in result.reason
+
+
+def test_floor_rule_applies_just_below_comfort_band():
+    assert evaluate(inputs(flow=19.8, living=19.4), RunTracker(), at(10)).advice is Advice.RUN
+    assert evaluate(inputs(flow=19.9, living=19.5), RunTracker(), at(10)).advice is Advice.WAIT
+
+
+def test_no_peak_floor_run_when_living_room_warm():
+    result = evaluate(inputs(flow=18.6, living=19.6), RunTracker(), at(18))
+    assert result.advice is Advice.WAIT
 
 
 def test_run_on_pv_surplus():
@@ -57,8 +74,8 @@ def test_no_pv_run_when_floor_full():
 
 def test_peak_window_waits_unless_floor_far_below():
     tracker = RunTracker()
-    assert evaluate(inputs(flow=19.8, living=19.5), tracker, at(18)).advice is Advice.WAIT
-    assert evaluate(inputs(flow=18.8, living=19.5), tracker, at(18, 5)).advice is Advice.RUN
+    assert evaluate(inputs(flow=19.6, living=19.3), tracker, at(18)).advice is Advice.WAIT
+    assert evaluate(inputs(flow=18.6, living=19.3), tracker, at(18, 5)).advice is Advice.RUN
 
 
 def test_keep_running_until_minimum_then_running():
@@ -108,7 +125,7 @@ def test_run_tracker_counts_runs_and_short_runs_and_resets_daily():
 def test_comparison_counters():
     tracker = RunTracker()
     # 10 min: floor below margin, heat pump off -> run advised
-    step(tracker, 0, 11, power=5, flow=19.8, living=19.5)
+    step(tracker, 0, 11, power=5, flow=19.6, living=19.3)
     assert round(tracker.stats.advised_run_minutes) == 10
     # start follows the advice -> not unadvised
     step(tracker, 11, 21, power=400, grid=-500)
