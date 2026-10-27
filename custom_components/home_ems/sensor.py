@@ -11,11 +11,12 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfEnergy, UnitOfPower, UnitOfTemperature, UnitOfTime
+from homeassistant.const import EntityCategory, UnitOfEnergy, UnitOfPower, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
+from .const import PLAN_STATUSES
 from .coordinator import HomeEmsConfigEntry, HomeEmsCoordinator
 from .entity import HomeEmsEntity
 from .model import Advice
@@ -31,6 +32,11 @@ def _next_run(c: HomeEmsCoordinator):
     return c.plan.next_run(dt_util.now()) if c.plan else None
 
 
+def _local(moment) -> str:
+    """ISO time in the local time zone of Home Assistant (easier to read than UTC)."""
+    return dt_util.as_local(moment).isoformat()
+
+
 def _plan_attrs(c: HomeEmsCoordinator) -> dict[str, Any]:
     p = c.plan
     if p is None:
@@ -39,16 +45,16 @@ def _plan_attrs(c: HomeEmsCoordinator) -> dict[str, Any]:
     return {
         "status": c.plan_status,
         "mode": "observation",
-        "end": nxt.end.isoformat() if nxt else None,
+        "end": _local(nxt.end) if nxt else None,
         "reason": nxt.reason if nxt else None,
         "pv_share": round(nxt.pv_share, 2) if nxt else None,
-        "horizon_end": p.horizon_end.isoformat(),
+        "horizon_end": _local(p.horizon_end),
         "run_hours": round(p.run_hours, 2),
         "heat_need_kwh": p.heat_need_kwh,
         "expected_cost": p.expected_cost,
         "baseline_cost": p.baseline_cost,
-        "made": p.made.isoformat(),
-        "runs": [r.to_dict() for r in p.runs],
+        "made": _local(p.made),
+        "runs": [r.to_dict() | {"start": _local(r.start), "end": _local(r.end)} for r in p.runs],
     }
 
 
@@ -62,6 +68,13 @@ SENSORS: tuple[HomeEmsSensorDescription, ...] = (
                             "plan_says_run": bool(c.plan and c.plan.running_now(dt_util.now()))},
     ),
     # --- day planner (v0.3)
+    HomeEmsSensorDescription(
+        key="planner_status",
+        device_class=SensorDeviceClass.ENUM,
+        options=PLAN_STATUSES,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda c: c.plan_status,
+    ),
     HomeEmsSensorDescription(
         key="plan_next_run",
         device_class=SensorDeviceClass.TIMESTAMP,

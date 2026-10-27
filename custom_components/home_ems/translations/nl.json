@@ -78,6 +78,14 @@
       },
       "plan_expected_cost": {
         "name": "Geplande stookkosten"
+      },
+      "planner_status": {
+        "name": "Status planner",
+        "state": {
+          "ok": "OK",
+          "no_temperature_forecast": "OK, zonder temperatuurverwachting",
+          "no_price_data": "Geen prijsdata"
+        }
       }
     }
   },

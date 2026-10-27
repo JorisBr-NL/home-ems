@@ -47,3 +47,9 @@ OPTION_DEFAULTS = {
 
 WEATHER_REFRESH = timedelta(minutes=30)
 REPLAN_INTERVAL = timedelta(minutes=5)
+
+# planner status (sensor "Planner status")
+PLAN_OK = "ok"
+PLAN_NO_TEMPERATURES = "no_temperature_forecast"
+PLAN_NO_PRICES = "no_price_data"
+PLAN_STATUSES = [PLAN_OK, PLAN_NO_TEMPERATURES, PLAN_NO_PRICES]

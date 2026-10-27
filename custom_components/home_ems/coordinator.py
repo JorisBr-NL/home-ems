@@ -33,6 +33,9 @@ from .const import (
     OPT_SOLAR_ENTITY,
     OPT_WEATHER_ENTITY,
     OPTION_DEFAULTS,
+    PLAN_NO_PRICES,
+    PLAN_NO_TEMPERATURES,
+    PLAN_OK,
     REPLAN_INTERVAL,
     UPDATE_INTERVAL,
     WEATHER_REFRESH,
@@ -66,7 +69,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}.tracker"
         )
         self.plan: Plan | None = None
-        self.plan_status = "no price data"
+        self.plan_status = PLAN_NO_PRICES
         self._temps: dict[datetime, float] = {}   # hour start (UTC) -> forecast temperature
         self._temps_fetched: datetime | None = None
 
@@ -90,6 +93,9 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         return PlannerSettings(
             base_load_kw=float(self.option(OPT_BASE_LOAD)),
             max_gap=timedelta(hours=float(self.option(OPT_MAX_GAP))),
+            peak_start=time.fromisoformat(self.option(OPT_PEAK_START)),
+            peak_end=time.fromisoformat(self.option(OPT_PEAK_END)),
+            tz=dt_util.get_default_time_zone(),
         )
 
     async def _async_setup(self) -> None:
@@ -151,10 +157,10 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         await self._async_refresh_temperatures(now)
         slots = self.build_slots()
         if not slots:
-            self.plan, self.plan_status = None, "no price data"
+            self.plan, self.plan_status = None, PLAN_NO_PRICES
             return
         self.plan = plan(slots, now, self.planner_settings(), self.tracker.last_run_end)
-        self.plan_status = "ok" if self._temps else "ok (no temperature forecast)"
+        self.plan_status = PLAN_OK if self._temps else PLAN_NO_TEMPERATURES
 
     async def _async_refresh_temperatures(self, now: datetime) -> None:
         weather = self.option(OPT_WEATHER_ENTITY)
