@@ -27,6 +27,9 @@
       },
       "peak_window": {
         "name": "Avondpiekvenster"
+      },
+      "plan_run_now": {
+        "name": "Run gepland nu"
       }
     },
     "sensor": {
@@ -66,6 +69,37 @@
       },
       "pv_running_minutes_today": {
         "name": "Draaiminuten op PV vandaag"
+      },
+      "plan_next_run": {
+        "name": "Volgende geplande run"
+      },
+      "plan_heat_need": {
+        "name": "Geplande warmtevraag"
+      },
+      "plan_expected_cost": {
+        "name": "Geplande stookkosten"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Instellingen Home EMS",
+        "description": "Databronnen voor de dagplanner en de drempels van het advies. Home EMS draait nog steeds in observatiemodus en verandert niets.",
+        "data": {
+          "price_entity": "Stroomprijssensor (Jeroen.nl, attribuut prices)",
+          "solar_entity": "Opwekvoorspelling (Jeroen.nl, vandaag, attribuut hours)",
+          "weather_entity": "Weerentiteit (temperatuurverwachting per uur)",
+          "comfort_setpoint": "Comfortsetpoint woonkamer",
+          "floor_rule_band": "Vloerregel alleen onder comfortsetpoint +",
+          "floor_min_margin": "Minimale vloermarge (flowmeter − woonkamer)",
+          "pv_run_threshold_w": "PV-overschot voor een run",
+          "min_run_minutes": "Minimale runtijd",
+          "peak_start": "Avondpiek vanaf",
+          "peak_end": "Avondpiek tot",
+          "max_gap_hours": "Langste tijd zonder run (planner)",
+          "base_load_kw": "Basisverbruik huis naast de warmtepomp (planner)"
+        }
       }
     }
   }

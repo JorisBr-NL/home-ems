@@ -27,6 +27,9 @@
       },
       "peak_window": {
         "name": "Evening peak window"
+      },
+      "plan_run_now": {
+        "name": "Planned run now"
       }
     },
     "sensor": {
@@ -66,6 +69,37 @@
       },
       "pv_running_minutes_today": {
         "name": "Running minutes on PV today"
+      },
+      "plan_next_run": {
+        "name": "Next planned run"
+      },
+      "plan_heat_need": {
+        "name": "Planned heat need"
+      },
+      "plan_expected_cost": {
+        "name": "Planned heating cost"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Home EMS settings",
+        "description": "Data sources for the day planner and the thresholds of the advice. Home EMS still runs in observation mode and changes nothing.",
+        "data": {
+          "price_entity": "Electricity price sensor (Jeroen.nl, attribute prices)",
+          "solar_entity": "Solar forecast sensor (Jeroen.nl, today, attribute hours)",
+          "weather_entity": "Weather entity (hourly temperature forecast)",
+          "comfort_setpoint": "Comfort setpoint living room",
+          "floor_rule_band": "Floor rule only below comfort setpoint +",
+          "floor_min_margin": "Minimum floor margin (flowmeter − living room)",
+          "pv_run_threshold_w": "Solar surplus for a run",
+          "min_run_minutes": "Minimum run time",
+          "peak_start": "Evening peak from",
+          "peak_end": "Evening peak until",
+          "max_gap_hours": "Longest time without a run (planner)",
+          "base_load_kw": "House base load besides the heat pump (planner)"
+        }
       }
     }
   }
