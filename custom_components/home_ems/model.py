@@ -31,6 +31,10 @@ class Settings:
     # starts below 20 C flowmeter at ~19.4 C living room, i.e. a margin of ~0.5 K.
     floor_min_margin: float = 0.5
     floor_full_margin: float = 3.0
+    # The floor rule only applies while the living room is below comfort + band. On
+    # 26 Oct 2026 the floor guard started a run at 19.8 C with a 19.0 C comfort setpoint.
+    comfort_setpoint: float = 19.0
+    floor_rule_band: float = 0.5
     pv_run_threshold_w: float = 700.0
     peak_start: time = time(17, 30)
     peak_end: time = time(20, 0)
@@ -210,24 +214,36 @@ def evaluate(inputs: Inputs, tracker: RunTracker, now: datetime,
         return result(Advice.UNKNOWN, "heat pump power unavailable")
 
     started = tracker.observe(running, now)
-    evaluation = _decide(running, floor_margin, surplus, peak, tracker, now, settings, result)
+    evaluation = _decide(running, floor_margin, inputs.living_temp, surplus, peak, tracker,
+                         now, settings, result)
     tracker.account(evaluation.advice, running, inputs.grid_power_w, started, now)
     return evaluation
 
 
-def _decide(running, floor_margin, surplus, peak, tracker, now, settings, result) -> Evaluation:
+def _decide(running, floor_margin, living_temp, surplus, peak, tracker, now, settings,
+            result) -> Evaluation:
     if running:
         duration = tracker.run_duration(now)
         if duration is not None and duration < settings.min_run:
             return result(Advice.KEEP_RUNNING, "run shorter than minimum run time")
         return result(Advice.RUNNING, "run in progress")
 
+    room_warm = (
+        living_temp is not None
+        and living_temp >= settings.comfort_setpoint + settings.floor_rule_band
+    )
+    floor_low = floor_margin is not None and floor_margin < settings.floor_min_margin
+
     if peak:
-        if floor_margin is not None and floor_margin < settings.floor_min_margin - 1.0:
+        if (
+            floor_margin is not None
+            and floor_margin < settings.floor_min_margin - 1.0
+            and not room_warm
+        ):
             return result(Advice.RUN, "floor far below limit during peak")
         return result(Advice.WAIT, "evening peak: avoid starting")
 
-    if floor_margin is not None and floor_margin < settings.floor_min_margin:
+    if floor_low and not room_warm:
         return result(Advice.RUN, "floor below minimum margin")
 
     if (
@@ -237,4 +253,6 @@ def _decide(running, floor_margin, surplus, peak, tracker, now, settings, result
     ):
         return result(Advice.RUN, "PV surplus available")
 
+    if floor_low:
+        return result(Advice.WAIT, "floor low but living room warm enough")
     return result(Advice.WAIT, "no run needed")

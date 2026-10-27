@@ -17,7 +17,7 @@ Home EMS leest sensoren uit en laat zien wat het **zou** doen. Het schrijft niet
 | `sensor.home_ems_pv_surplus` | teruglevering op dit moment (W) |
 | `sensor.home_ems_runs_today` / `short_runs_today` | aantal runs en runs korter dan 30 min vandaag |
 
-Advieslogica: buiten het avondvenster een run als de vloermarge onder 0,5 K komt, of bij ≥ 700 W PV-overschot zolang de vloermarge onder 3 K ligt; een lopende run korter dan 30 min hoort door te lopen.
+Advieslogica: buiten het avondvenster een run als de vloermarge onder 0,5 K komt **en de woonkamer onder 19,5 °C is** (comfortsetpoint 19,0 °C + 0,5 °C, sinds v0.2.1), of bij ≥ 700 W PV-overschot zolang de vloermarge onder 3 K ligt; een lopende run korter dan 30 min hoort door te lopen.
 
 ### Advies vergelijken met de werkelijkheid (v0.2)
 
