@@ -78,6 +78,14 @@
       },
       "plan_expected_cost": {
         "name": "Planned heating cost"
+      },
+      "planner_status": {
+        "name": "Planner status",
+        "state": {
+          "ok": "OK",
+          "no_temperature_forecast": "OK, without temperature forecast",
+          "no_price_data": "No price data"
+        }
       }
     }
   },

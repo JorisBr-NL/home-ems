@@ -123,6 +123,29 @@ def test_build_slots_from_jeroen_attributes():
     assert planner.build_slots(rows[:1], None, None, fallback_temp=7.0)[0].temp == 7.0
 
 
+def test_peak_penalty_keeps_runs_out_of_the_evening_window():
+    # flat prices: without a penalty the earliest blocks win on ties; make 17:00-21:00 NL
+    # (16:00-20:00 UTC) slightly cheaper so they would be chosen without the penalty
+    prices = {h: 0.25 for h in range(24)} | {16: 0.24, 17: 0.24, 18: 0.24, 19: 0.24}
+    base = dict(horizon=timedelta(hours=24), max_gap=timedelta(hours=24))
+    slots = day(prices=prices, temp=16.0)  # small need: 2 run-hours
+    without = planner.plan(slots, T0, planner.PlannerSettings(peak_penalty=0.0, **base))
+    with_penalty = planner.plan(slots, T0, planner.PlannerSettings(**base))
+
+    def in_peak(run):
+        tz = planner.ZoneInfo("Europe/Amsterdam")
+        t, quarters = run.start, []
+        while t < run.end:
+            quarters.append(t.astimezone(tz).time())
+            t += Q
+        return any(planner.time(17, 30) <= q < planner.time(20, 0) for q in quarters)
+
+    assert any(in_peak(r) for r in without.runs)
+    assert not any(in_peak(r) for r in with_penalty.runs)
+    # the penalty only steers the choice; the expected cost is the real price
+    assert with_penalty.expected_cost >= without.expected_cost
+
+
 def test_next_run_and_running_now():
     p = planner.plan(day(temp=8.0), T0, S)
     first = p.runs[0]

@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone, tzinfo
+from zoneinfo import ZoneInfo
 
 QUARTER = timedelta(minutes=15)
 
@@ -33,6 +34,13 @@ class PlannerSettings:
     block: timedelta = timedelta(hours=1)      # minimum length of a planned run
     max_gap: timedelta = timedelta(hours=8)    # longest time without a run
     horizon: timedelta = timedelta(hours=36)
+    # Evening peak: an extra cost per kWh heat for quarters in this window, used only
+    # to choose runs (not in the expected cost). Keeps runs out of the window unless
+    # the gap rule needs one there.
+    peak_start: time = time(17, 30)
+    peak_end: time = time(20, 0)
+    peak_penalty: float = 0.05        # EUR per kWh heat
+    tz: tzinfo = ZoneInfo("Europe/Amsterdam")
 
 
 @dataclass(frozen=True)
@@ -183,8 +191,12 @@ def plan(slots: list[Slot], now: datetime, s: PlannerSettings | None = None,
 
     starts = [i for i in range(len(costs) - per_block + 1) if contiguous(i)]
 
+    def choice_cost(c: SlotCost) -> float:
+        local = c.slot.start.astimezone(s.tz).time()
+        return c.cost_per_kwh_heat + (s.peak_penalty if s.peak_start <= local < s.peak_end else 0.0)
+
     def block_cost(i: int) -> float:
-        return sum(c.cost_per_kwh_heat for c in costs[i:i + per_block]) / per_block
+        return sum(choice_cost(c) for c in costs[i:i + per_block]) / per_block
 
     chosen: list[int] = []
     reasons: dict[int, str] = {}
