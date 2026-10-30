@@ -63,7 +63,16 @@ from .const import (
     WEATHER_REFRESH,
 )
 from .model import Evaluation, Inputs, RunTracker, Settings, evaluate
-from .overview import Usage, YearSummary, build_overview, parse_settings, to_csv, years_csv
+from .overview import (
+    Usage,
+    YearSummary,
+    apply_manual,
+    build_overview,
+    clean_daily,
+    parse_settings,
+    to_csv,
+    years_csv,
+)
 from .planner import Plan, PlannerSettings, Slot, build_slots, hour_of, plan
 
 _LOGGER = logging.getLogger(__name__)
@@ -121,6 +130,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self.overview: list[YearSummary] = []
         self.overview_status = OVERVIEW_NOT_CONFIGURED
         self._overview_made: datetime | None = None
+        self.overview_skipped: list[dict[str, Any]] = []   # glitch days left out of the overview
 
     # ------------------------------------------------------------ settings
 
@@ -252,11 +262,12 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         first = options.get(OPT_OVERVIEW_FROM)
         start_day = date.fromisoformat(first) if first else date(now.year - 1, 1, 1)
         start = dt_util.start_of_local_day(start_day)
-        days = await self._async_daily_usage(roles, start, now)
+        # statistics from `overview_from` on; hand-entered periods may lie before it
+        days = apply_manual(await self._async_daily_usage(roles, start, now), settings.manual)
         if not days:
             self.overview, self.overview_status = [], OVERVIEW_NO_DATA
             return
-        self.overview = build_overview(days, now.date(), settings, start_day.year)
+        self.overview = build_overview(days, now.date(), settings)
         self.overview_status = OVERVIEW_OK
         folder = options.get(OPT_EXPORT_DIR)
         if folder:
@@ -282,16 +293,20 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             statistics_during_period, self.hass, start, end, set(roles["temp"]), "day",
             {"temperature": "°C"}, {"mean"}) if roles["temp"] else {}
         days: dict[date, dict[str, float]] = {}
+        skipped: list[dict[str, Any]] = []
         for role, stat_ids in roles.items():
             source, field = (temps, "mean") if role == "temp" else (changes, "change")
             for stat_id in stat_ids:
-                for row in source.get(stat_id, []):
-                    value = row.get(field)
-                    if value is None:
-                        continue
-                    day = _row_day(row["start"])
+                series = {_row_day(row["start"]): float(row[field])
+                          for row in source.get(stat_id, []) if row.get(field) is not None}
+                if role not in ("temp", "import_cost", "export_revenue"):
+                    series, dropped = clean_daily(series)
+                    skipped += [{"statistic": stat_id, "day": d.isoformat(), "value": round(v, 1)}
+                                for d, v in dropped]
+                for day, value in series.items():
                     values = days.setdefault(day, {})
-                    values[role] = values.get(role, 0.0) + float(value)
+                    values[role] = values.get(role, 0.0) + value
+        self.overview_skipped = skipped
         out: dict[date, Usage] = {}
         for day, v in days.items():
             out[day] = Usage(

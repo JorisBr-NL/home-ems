@@ -6,7 +6,7 @@ Eigen energiemanagementsysteem voor Home Assistant: stuurt (straks) de Quatt-war
 
 Het ontwerp staat in Obsidian (`Projects/Energie/EMS ontwerp.md`); de analyse waarop de standaardwaarden zijn gebaseerd in `Projects/Energie/Analyse runs en flowmeter.md`.
 
-## Status: versie 0.4.0 – observatiemodus
+## Status: versie 0.4.1 – observatiemodus
 
 Home EMS leest sensoren uit en laat zien wat het **zou** doen. Het schrijft niets naar apparaten; je bestaande automatiseringen blijven leidend.
 
@@ -173,7 +173,7 @@ Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kie
 
 ### Energie- en kostenoverzicht (v0.4)
 
-Vervangt een zelf bijgehouden Excel-overzicht. Home EMS leest elk uur de langetermijnstatistieken van HA (per dag) en maakt per maand en per jaar:
+Vervangt een zelf bijgehouden Excel-overzicht. Home EMS leest elk uur de langetermijnstatistieken van HA (per dag) en maakt per maand en per **contractjaar** (zoals op de jaarafrekening: van de startdatum van een contract tot de dag voor het volgende contract, of per jaar vanaf de startdatum; een maand waarin het contract wisselt, wordt gesplitst):
 
 - **meten:** gas, opwek, teruglevering, afname, afname − teruglevering, verbruik totaal / algemeen / warmtepomp / laadpaal, eigen verbruik % (= (opwek − teruglevering) / opwek), gemiddelde buitentemperatuur;
 - **kosten:** vaste kosten, gas, stroom, laadpaalvergoeding, totaal, voorschot, cumulatief totaal en voorschot, cashback, verwachte eindafrekening;
@@ -183,7 +183,7 @@ Stroomkosten: tot en met `saldering_tot` per dag (afname − teruglevering) × t
 
 | Entiteit | Betekenis |
 |---|---|
-| `sensor.home_ems_year_cost_expected` | verwachte energiekosten dit jaar (werkelijk + voorspelling − cashback); attributen `months` (de maandtabel) en `years` |
+| `sensor.home_ems_year_cost_expected` | verwachte energiekosten van het lopende contractjaar (werkelijk + voorspelling − cashback); attributen `months` (de maandtabel), `years`, `from`, `to` en `contract` |
 | `sensor.home_ems_settlement_expected` | verwachte eindafrekening: kosten − voorschotten (positief = bijbetalen) |
 | `sensor.home_ems_month_cost_expected` | verwachte kosten van de lopende maand, met de maandregel als attributen |
 | `sensor.home_ems_own_use_year` | eigen verbruik van zonnestroom dit jaar (%) |
@@ -192,9 +192,13 @@ Stroomkosten: tot en met `saldering_tot` per dag (afname − teruglevering) × t
 
 De entity-id's volgen de taal van HA bij het aanmaken (in het Nederlands bijvoorbeeld `sensor.home_ems_verwachte_energiekosten_dit_jaar`).
 
+**Uitschieters:** een statistiek die even een onzinwaarde meldt (bijvoorbeeld een omvormer met een verkeerde dagtotaal), levert een dag met een enorme sprong op. Home EMS laat dagen weg die negatief zijn of boven 8 × de mediaan van die statistiek liggen (minimaal 100 per dag), en toont ze in de attributen `skipped_days` van *Status overzicht*, zodat je ze in HA kunt corrigeren (Ontwikkelaarshulpmiddelen → Statistieken).
+
+**Handmatige perioden:** voor maanden van vóór de HA-statistieken (of met foute statistieken) vul je onder `handmatig` de cijfers zelf in, per maand of per periode. Die vervangen de statistieken van die dagen. `temp` (gemiddelde buitentemperatuur) helpt de voorspelling van warmtepomp en gas.
+
 **CSV:** als er een map is ingesteld (standaard `/share/energie`), schrijft Home EMS elk uur `energy_overzicht_JJJJ.csv` per jaar en `energy_overzicht_jaren.csv`, met puntkomma's en een decimale komma zodat Excel (NL) ze direct opent.
 
-**Instellen:** *Configureren* → *Energie- en kostenoverzicht*. Kies de statistieken (dezelfde als in het Energy-dashboard) en vul de contracten in als YAML:
+**Instellen:** *Configureren* → *Energie- en kostenoverzicht*. Kies de sensoren (dezelfde als in het Energy-dashboard; voor de kostenvelden kun je ook een statistiek zonder sensor kiezen, zoals die van Tibber) en vul de contracten in als YAML:
 
 ```yaml
 # prijzen all-in (incl. energiebelasting en btw); vast_per_dag = vaste kosten + netbeheer
@@ -223,8 +227,11 @@ laadpaal_vergoeding:      # per geladen kWh, bijvoorbeeld van een werkgever
     per_kwh: 0.40
 cashback:
   2026: 390
-afrekening:               # werkelijke eindafrekening, ter vergelijking
+afrekening:               # werkelijke eindafrekening per contractjaar (jaar van de startdatum)
   2025: 1854
+handmatig:                # perioden zonder (goede) statistieken
+  2025-12: {gas: 54, opwek: 161, teruglevering: 48, afname: 1386, warmtepomp: 539, laadpaal: 394, temp: 5.6}
+  2026-01-01/2026-01-13: {gas: 38, opwek: 37, teruglevering: 5, afname: 871, warmtepomp: 447, laadpaal: 140, temp: 0.1}
 ```
 
 **Dashboardkaart** (Markdown-kaart; pas de entity-id aan):
@@ -238,7 +245,7 @@ content: >
   | Maand | Gas | Opwek | Terug | Afname | WP | Laadpaal | Totaal € | Cum € | Cum voorschot € |
   |---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
   {% for m in y -%}
-  | {{ m.month }}{{ ' *' if m.status != 'actual' }} | {{ m.gas_m3 | round(0) }} | {{ m.pv_kwh }} | {{ m.export_kwh }} | {{ m.import_kwh }} | {{ m.heat_pump_kwh }} | {{ m.ev_kwh }} | {{ m.total | round(0) }} | {{ m.cum_total | round(0) }} | {{ m.cum_advance | round(0) }} |
+  | {{ m.month }}{{ ' (' ~ m.days ~ ')' if m.days }}{{ ' *' if m.status != 'actual' }} | {{ m.gas_m3 | round(0) }} | {{ m.pv_kwh }} | {{ m.export_kwh }} | {{ m.import_kwh }} | {{ m.heat_pump_kwh }} | {{ m.ev_kwh }} | {{ m.total | round(0) }} | {{ m.cum_total | round(0) }} | {{ m.cum_advance | round(0) }} |
   {% endfor %}
 
   \* = (deels) voorspelling. Verwachte kosten **€ {{ states(s) | round(0) }}**, voorschotten € {{ state_attr(s, 'advances') | round(0) }}, verwachte afrekening **€ {{ state_attr(s, 'expected_settlement') | round(0) }}**, eigen verbruik {{ state_attr(s, 'own_use_pct') }}%.

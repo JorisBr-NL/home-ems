@@ -154,7 +154,7 @@
           "stat_import_cost": "Werkelijke inkoopkosten (EUR, dynamisch contract)",
           "stat_export_revenue": "Werkelijke terugleververgoeding (EUR, dynamisch contract)",
           "overview_from": "Overzicht vanaf",
-          "cost_settings": "Contracten, voorschotten, laadpaalvergoeding, cashback (YAML)",
+          "cost_settings": "Contracten, voorschotten, laadpaalvergoeding, cashback, handmatige perioden (YAML)",
           "export_dir": "Map voor de CSV-bestanden"
         }
       }

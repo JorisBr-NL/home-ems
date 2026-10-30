@@ -100,6 +100,7 @@ class CostSettings:
     ev_refunds: tuple[Period, ...] = ()    # EUR per kWh charged
     cashback: dict[int, float] = field(default_factory=dict)
     settlements: dict[int, float] = field(default_factory=dict)   # actual final bill per year
+    manual: dict[tuple[date, date], Usage] = field(default_factory=dict)  # periods entered by hand
 
     def contract(self, day: date) -> Contract | None:
         current = None
@@ -121,6 +122,29 @@ class CostSettings:
 
 def _date(value) -> date:
     return value if isinstance(value, date) else date.fromisoformat(str(value))
+
+
+def _period_key(value) -> tuple[date, date]:
+    """'2025-03' (a whole month) or '2026-01-01/2026-01-13' (inclusive)."""
+    text = str(value).strip()
+    if "/" in text:
+        first, last = (date.fromisoformat(p.strip()) for p in text.split("/", 1))
+        if last < first:
+            raise ValueError(f"period ends before it starts: {text}")
+        return first, last
+    first = date.fromisoformat(f"{text}-01" if len(text) == 7 else text).replace(day=1)
+    return first, first.replace(day=calendar.monthrange(first.year, first.month)[1])
+
+
+def _manual_usage(span: tuple[date, date], v: dict) -> Usage:
+    n = (span[1] - span[0]).days + 1
+    temp = v.get("temp")
+    return Usage(
+        import_kwh=float(v.get("afname", 0)), export_kwh=float(v.get("teruglevering", 0)),
+        pv_kwh=float(v.get("opwek", 0)), gas_m3=float(v.get("gas", 0)),
+        hp_kwh=float(v.get("warmtepomp", 0)), ev_kwh=float(v.get("laadpaal", 0)),
+        temp_sum=float(temp) * n if temp is not None else 0.0, temp_days=n if temp is not None else 0,
+    )
 
 
 def parse_settings(raw: dict | None) -> CostSettings:
@@ -147,9 +171,48 @@ def parse_settings(raw: dict | None) -> CostSettings:
             advances=advances, ev_refunds=refunds,
             cashback={int(k): float(v) for k, v in (raw.get("cashback") or {}).items()},
             settlements={int(k): float(v) for k, v in (raw.get("afrekening") or {}).items()},
+            manual={(span := _period_key(k)): _manual_usage(span, v)
+                    for k, v in (raw.get("handmatig") or {}).items()},
         )
     except (KeyError, TypeError, ValueError) as err:
         raise ValueError(str(err)) from err
+
+
+# ---------------------------------------------------------------- input cleaning
+
+
+def clean_daily(values: dict[date, float], floor: float = 100.0,
+                factor: float = 8.0) -> tuple[dict[date, float], list[tuple[date, float]]]:
+    """Drop glitches from the daily change of one statistic: negative days (a meter
+    that went back) and days far above the normal level (a sensor that briefly
+    reported a wrong total). The limit is `factor` times the median of the positive
+    days, but never below `floor`."""
+    positive = sorted(v for v in values.values() if v > 0)
+    median = positive[len(positive) // 2] if positive else 0.0
+    limit = max(floor, factor * median)
+    clean, dropped = {}, []
+    for day, value in values.items():
+        if value < -0.01 or value > limit:
+            dropped.append((day, value))
+        else:
+            clean[day] = max(0.0, value)
+    return clean, sorted(dropped)
+
+
+def apply_manual(days: dict[date, Usage],
+                 manual: dict[tuple[date, date], Usage]) -> dict[date, Usage]:
+    """Replace the days of every hand-entered period by that period spread evenly."""
+    out = {d: u for d, u in days.items()
+           if not any(first <= d <= last for first, last in manual)}
+    for (first, last), u in manual.items():
+        n = (last - first).days + 1
+        per_day = Usage(
+            u.import_kwh / n, u.export_kwh / n, u.pv_kwh / n, u.gas_m3 / n, u.hp_kwh / n, u.ev_kwh / n,
+            temp_sum=u.temp_sum / n, temp_days=1 if u.temp_days else 0,
+        )
+        for i in range(n):
+            out[first + timedelta(days=i)] = per_day
+    return out
 
 
 # ---------------------------------------------------------------- costs
@@ -309,12 +372,21 @@ class MonthRow:
     usage: Usage
     costs: Costs
     advance: float
+    first_day: int = 1   # rows of a month split by a contract change cover only part of it
+    last_day: int = 0    # 0 = until the end of the month
+
+    @property
+    def partial(self) -> bool:
+        return self.first_day != 1 or self.last_day not in (0, month_days(self.month))
 
     def as_dict(self) -> dict:
         u, c = self.usage, self.costs
         own = (u.pv_kwh - u.export_kwh) / u.pv_kwh * 100 if u.pv_kwh > 0 else None
+        last = self.last_day or month_days(self.month)
         return {
-            "month": self.month.strftime("%Y-%m"), "status": self.status,
+            "month": self.month.strftime("%Y-%m"),
+            "days": f"{self.first_day}-{last}" if self.partial else None,
+            "status": self.status,
             "gas_m3": round(u.gas_m3, 1), "pv_kwh": round(u.pv_kwh), "export_kwh": round(u.export_kwh),
             "import_kwh": round(u.import_kwh), "net_kwh": round(u.import_kwh - u.export_kwh),
             "total_kwh": round(u.total_kwh), "general_kwh": round(u.general_kwh),
@@ -328,10 +400,19 @@ class MonthRow:
 
 @dataclass(frozen=True)
 class YearSummary:
-    year: int
+    """One settlement year: from a contract start (or its anniversary) to the day before
+    the next contract or anniversary, as on the yearly bill."""
+
+    start: date
+    end: date            # inclusive
+    name: str
     rows: tuple[MonthRow, ...]
     cashback: float
     settlement: float | None
+
+    @property
+    def year(self) -> int:
+        return self.start.year
 
     @property
     def usage(self) -> Usage:
@@ -364,7 +445,8 @@ class YearSummary:
             d["cum_total"], d["cum_advance"] = round(cum_cost, 2), round(cum_adv, 2)
             months.append(d)
         return {
-            "year": self.year, "complete": self.complete,
+            "year": self.year, "from": self.start.isoformat(), "to": self.end.isoformat(),
+            "contract": self.name, "complete": self.complete,
             "gas_m3": round(u.gas_m3), "pv_kwh": round(u.pv_kwh), "export_kwh": round(u.export_kwh),
             "import_kwh": round(u.import_kwh), "net_kwh": round(u.import_kwh - u.export_kwh),
             "total_kwh": round(u.total_kwh), "general_kwh": round(u.general_kwh),
@@ -378,16 +460,36 @@ class YearSummary:
         }
 
 
-def _net_metering_surplus(year: int, rows: list[MonthRow], s: CostSettings) -> list[MonthRow]:
-    """Net metering pays the purchase price only up to the import of the year; a net
-    export surplus earns the (lower) export price. The monthly rows credit every
-    exported kWh at the purchase price, so correct the last net-metering month."""
+def settlement_years(s: CostSettings, until: date) -> list[tuple[date, date, str]]:
+    """(start, end, contract name) per settlement year up to the one containing `until`.
+
+    A contract runs to the day before the next one; a contract longer than a year
+    (or the last one) is cut into years from its start date. A remainder of up to a
+    month is added to the last year instead of becoming a year of its own."""
+    out = []
+    contracts = list(s.contracts)
+    for i, c in enumerate(contracts):
+        stop = contracts[i + 1].start - timedelta(days=1) if i + 1 < len(contracts) else None
+        start = c.start
+        while start <= until and (stop is None or start <= stop):
+            nxt = start.replace(year=start.year + 1) - timedelta(days=1)
+            if stop is not None and (nxt >= stop or (stop - nxt).days <= 31):
+                nxt = stop
+            out.append((start, nxt, c.name))
+            start = nxt + timedelta(days=1)
+    return out
+
+
+def _net_metering_surplus(rows: list[MonthRow], s: CostSettings) -> list[MonthRow]:
+    """Net metering pays the purchase price only up to the import of the settlement
+    year; a net export surplus earns the (lower) export price. The rows credit every
+    exported kWh at the purchase price, so correct the last net-metering row."""
     metered = [r for r in rows if r.month <= s.net_metering_until]
     if not metered:
         return rows
     surplus = sum(r.usage.export_kwh - r.usage.import_kwh for r in metered)
     last = metered[-1]
-    last_day = min(s.net_metering_until, date(year, last.month.month, month_days(last.month)))
+    last_day = min(s.net_metering_until, last.month.replace(day=last.last_day or month_days(last.month)))
     contract = s.contract(last_day)
     if surplus <= 0 or contract is None:
         return rows
@@ -396,51 +498,47 @@ def _net_metering_surplus(year: int, rows: list[MonthRow], s: CostSettings) -> l
     return [fixed if r is last else r for r in rows]
 
 
-def build_overview(days: dict[date, Usage], today: date, s: CostSettings,
-                   first_year: int | None = None) -> list[YearSummary]:
-    """Years from the first day with data (or `first_year`) up to the current year.
+def build_overview(days: dict[date, Usage], today: date, s: CostSettings) -> list[YearSummary]:
+    """Settlement years (see `settlement_years`) from the first contract up to the one
+    that contains today, each split in calendar months.
 
-    Months before today are actual, the current month is actual so far plus the
-    forecast for the remaining days, and later months of this year are forecast."""
+    Days before today are actual, the rest is forecast; the current month is actual so
+    far plus the forecast for its remaining days. A month's advance payment is booked
+    on its last day, so a month split by a contract change counts it once."""
     current = month_start(today)
-    complete = {m: u for m, u in by_month({d: u for d, u in days.items() if d < current}).items()}
-    forecaster = Forecaster.learn(complete)
-    start_year = first_year or (min(days).year if days else today.year)
+    forecaster = Forecaster.learn(by_month({d: u for d, u in days.items() if d < current}))
     years = []
-    for year in range(start_year, today.year + 1):
+    for start, end, name in settlement_years(s, today):
         rows = []
-        for mo in range(1, 13):
-            m = date(year, mo, 1)
+        m = month_start(start)
+        while m <= end:
             n = month_days(m)
-            month_days_list = [m + timedelta(days=i) for i in range(n)]
-            if m < current:
-                if not any(d in days for d in month_days_list):
-                    continue
-                status, actual_days, future_days = "actual", month_days_list, []
-            elif m == current:
-                status = "running"
-                actual_days = [d for d in month_days_list if d < today]
-                future_days = [d for d in month_days_list if d >= today]
-            else:
-                status, actual_days, future_days = "forecast", [], month_days_list
+            first = max(start, m)
+            last = min(end, m + timedelta(days=n - 1))
+            span = [first + timedelta(days=i) for i in range((last - first).days + 1)]
+            if last < today and not any(d in days for d in span):
+                m = add_months(m, 1)
+                continue
+            status = "actual" if last < today else "forecast" if first >= today else "running"
+            per_day = forecaster.predict(m).scaled(1 / n) if last >= today else None
             usage, costs = Usage(), Costs()
-            for d in actual_days:
-                u = days.get(d, Usage())
+            for d in span:
+                u = days.get(d, Usage()) if d < today else per_day
                 usage, costs = usage + u, costs + day_costs(d, u, s)
-            if future_days:
-                per_day = forecaster.predict(m).scaled(1 / n)
-                for d in future_days:
-                    usage, costs = usage + per_day, costs + day_costs(d, per_day, s)
-            rows.append(MonthRow(m, status, usage, costs, s.advance(m)))
-        rows = _net_metering_surplus(year, rows, s)
+            month_end = m + timedelta(days=n - 1)
+            advance = s.advance(m) if last == month_end else 0.0
+            rows.append(MonthRow(m, status, usage, costs, advance, first.day,
+                                 0 if last == month_end else last.day))
+            m = add_months(m, 1)
+        rows = _net_metering_surplus(rows, s)
         if rows:
-            years.append(YearSummary(year, tuple(rows), s.cashback.get(year, 0.0),
-                                     s.settlements.get(year)))
+            years.append(YearSummary(start, end, name, tuple(rows), s.cashback.get(start.year, 0.0),
+                                     s.settlements.get(start.year)))
     return years
 
 
 CSV_COLUMNS = (
-    ("Maand", "month"), ("Status", "status"), ("Gas m3", "gas_m3"), ("Opwek kWh", "pv_kwh"),
+    ("Maand", "month"), ("Dagen", "days"), ("Status", "status"), ("Gas m3", "gas_m3"), ("Opwek kWh", "pv_kwh"),
     ("Teruglevering kWh", "export_kwh"), ("Afname kWh", "import_kwh"), ("Afname - teruglevering", "net_kwh"),
     ("Verbruik totaal kWh", "total_kwh"), ("Algemeen kWh", "general_kwh"), ("Warmtepomp kWh", "heat_pump_kwh"),
     ("Laadpaal kWh", "ev_kwh"), ("Eigen verbruik %", "own_use_pct"), ("Buitentemp gem", "mean_temp"),
@@ -472,10 +570,10 @@ def to_csv(summary: YearSummary) -> str:
 
 
 def years_csv(years: list[YearSummary]) -> str:
-    head = ("Jaar;Compleet;Gas m3;Opwek kWh;Teruglevering kWh;Afname kWh;Verbruik totaal kWh;"
+    head = ("Jaar;Van;Tot;Contract;Compleet;Gas m3;Opwek kWh;Teruglevering kWh;Afname kWh;Verbruik totaal kWh;"
             "Algemeen kWh;Warmtepomp kWh;Laadpaal kWh;Eigen verbruik %;Voorschotten;Cashback;"
             "Totale kosten;Verwachte afrekening;Volgens afrekening")
-    keys = ("year", "complete", "gas_m3", "pv_kwh", "export_kwh", "import_kwh", "total_kwh",
+    keys = ("year", "from", "to", "contract", "complete", "gas_m3", "pv_kwh", "export_kwh", "import_kwh", "total_kwh",
             "general_kwh", "heat_pump_kwh", "ev_kwh", "own_use_pct", "advances", "cashback",
             "costs", "expected_settlement", "settlement")
     out = [head]
@@ -488,5 +586,5 @@ def years_csv(years: list[YearSummary]) -> str:
     return "\n".join(out) + "\n"
 
 
-__all__ = ["Usage", "Contract", "Period", "CostSettings", "parse_settings", "Costs", "day_costs",
+__all__ = ["settlement_years", "clean_daily", "apply_manual", "Usage", "Contract", "Period", "CostSettings", "parse_settings", "Costs", "day_costs",
            "Forecaster", "MonthRow", "YearSummary", "build_overview", "to_csv", "years_csv", "replace"]

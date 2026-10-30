@@ -116,7 +116,13 @@ def _optional(current: dict[str, Any], key: str) -> vol.Optional:
 
 
 def _statistic(multiple: bool = False) -> selector.StatisticSelector:
+    """For statistics that are not sensors (e.g. the cost statistics of Tibber)."""
     return selector.StatisticSelector(selector.StatisticSelectorConfig(multiple=multiple))
+
+
+def _meter(multiple: bool = False) -> selector.EntitySelector:
+    """A sensor with long-term statistics; its entity id is also the statistic id."""
+    return selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor", multiple=multiple))
 
 
 class HomeEmsOptionsFlow(OptionsFlow):
@@ -142,13 +148,13 @@ class HomeEmsOptionsFlow(OptionsFlow):
         current = {OPT_COST_SETTINGS: COST_SETTINGS_EXAMPLE, OPT_EXPORT_DIR: "/share/energie",
                    **self.config_entry.options, **(user_input or {})}
         schema = vol.Schema({
-            _optional(current, OPT_STAT_IMPORT): _statistic(multiple=True),
-            _optional(current, OPT_STAT_EXPORT): _statistic(multiple=True),
-            _optional(current, OPT_STAT_PV): _statistic(multiple=True),
-            _optional(current, OPT_STAT_GAS): _statistic(),
-            _optional(current, OPT_STAT_HEAT_PUMP): _statistic(multiple=True),
-            _optional(current, OPT_STAT_EV): _statistic(),
-            _optional(current, OPT_STAT_OUTSIDE): _statistic(),
+            _optional(current, OPT_STAT_IMPORT): _meter(multiple=True),
+            _optional(current, OPT_STAT_EXPORT): _meter(multiple=True),
+            _optional(current, OPT_STAT_PV): _meter(multiple=True),
+            _optional(current, OPT_STAT_GAS): _meter(),
+            _optional(current, OPT_STAT_HEAT_PUMP): _meter(multiple=True),
+            _optional(current, OPT_STAT_EV): _meter(),
+            _optional(current, OPT_STAT_OUTSIDE): _meter(),
             _optional(current, OPT_STAT_IMPORT_COST): _statistic(),
             _optional(current, OPT_STAT_EXPORT_REVENUE): _statistic(),
             _optional(current, OPT_OVERVIEW_FROM): selector.DateSelector(),

@@ -154,7 +154,7 @@
           "stat_import_cost": "Actual purchase cost (EUR, dynamic contract)",
           "stat_export_revenue": "Actual export compensation (EUR, dynamic contract)",
           "overview_from": "Overview from",
-          "cost_settings": "Contracts, advances, wallbox refund, cashback (YAML)",
+          "cost_settings": "Contracts, advances, wallbox refund, cashback, hand-entered periods (YAML)",
           "export_dir": "Folder for the CSV files"
         }
       }

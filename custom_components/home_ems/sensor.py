@@ -66,8 +66,9 @@ def _plan_attrs(c: HomeEmsCoordinator) -> dict[str, Any]:
 
 
 def _this_year(c: HomeEmsCoordinator) -> dict[str, Any] | None:
-    year = dt_util.now().year
-    return next((y.as_dict() for y in c.overview if y.year == year), None)
+    """The settlement year (contract year) that contains today."""
+    today = dt_util.now().date()
+    return next((y.as_dict() for y in c.overview if y.start <= today <= y.end), None)
 
 
 def _this_month(c: HomeEmsCoordinator) -> dict[str, Any] | None:
@@ -95,6 +96,9 @@ SENSORS: tuple[HomeEmsSensorDescription, ...] = (
         options=OVERVIEW_STATUSES,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda c: c.overview_status,
+        # days with a glitch in a statistic (left out), so they can be checked
+        attrs_fn=lambda c: {"skipped_days_count": len(c.overview_skipped),
+                            "skipped_days": c.overview_skipped[:30]},
     ),
     HomeEmsSensorDescription(
         key="year_cost_expected",
@@ -239,7 +243,7 @@ async def async_setup_entry(
 
 
 class HomeEmsSensor(HomeEmsEntity, SensorEntity):
-    _unrecorded_attributes = frozenset({"runs", "months", "years"})
+    _unrecorded_attributes = frozenset({"runs", "months", "years", "skipped_days"})
     entity_description: HomeEmsSensorDescription
 
     def __init__(
