@@ -269,3 +269,18 @@ def test_wallbox_refund_is_outside_the_costs_and_discount_lowers_fixed_costs():
     y = ov.build_overview(days, date(2027, 4, 1), s)[0].as_dict()
     assert y["ev_refund"] == pytest.approx(-3.5 * 59, abs=0.01)
     assert y["costs"] == pytest.approx(sum(m["total"] for m in y["months"]), abs=0.05)
+
+
+def test_calendar_years_for_a_contract():
+    s = ov.parse_settings({"contracten": [
+        {"vanaf": "2025-01-01"},
+        {"vanaf": "2027-01-25", "naam": "maandfactuur", "jaren": "kalender"}]})
+    years = ov.settlement_years(s, date(2028, 6, 1))
+    assert [y[:2] for y in years] == [
+        (date(2025, 1, 1), date(2025, 12, 31)),
+        (date(2026, 1, 1), date(2027, 1, 24)),       # 24 days left: added to the last year
+        (date(2027, 1, 25), date(2027, 12, 31)),     # first calendar year ends on 31 December
+        (date(2028, 1, 1), date(2028, 12, 31)),
+    ]
+    with pytest.raises(ValueError):
+        ov.parse_settings({"contracten": [{"vanaf": "2027-01-25", "jaren": "boekjaar"}]})
