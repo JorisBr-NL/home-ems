@@ -217,15 +217,17 @@ contracten:
     teruglevering: 0.05   # verwachte gemiddelde terugleverprijs
     gas: 1.24
     vast_per_dag: 0.67
+    korting_per_maand: 15 # korting op de maandfactuur (wordt per dag verrekend in de vaste kosten)
 saldering_tot: 2026-12-31
 voorschotten:
   - vanaf: 2026-01-14
     bedrag: 123
-laadpaal_vergoeding:      # per geladen kWh, bijvoorbeeld van een werkgever
+laadpaal_vergoeding:      # per geladen kWh, apart uitbetaald (bijv. door de laadpaaloperator); staat als
+                          # losse kolom in het overzicht, maar telt niet mee in de kosten of de afrekening
   - vanaf: 2025-12-01
     tot: 2026-08-31
     per_kwh: 0.40
-cashback:
+cashback:                 # per contractjaar (jaar van de startdatum), gaat van de jaarkosten af
   2026: 390
 afrekening:               # werkelijke eindafrekening per contractjaar (jaar van de startdatum)
   2025: 1854

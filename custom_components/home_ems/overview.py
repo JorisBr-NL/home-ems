@@ -85,6 +85,7 @@ class Contract:
     gas_price: float = 0.0         # EUR/m3 all-in
     fixed_per_day: float = 0.0     # supplier + grid operator - energy tax reduction, per day
     dynamic: bool = False          # prices above are then only expectations for the forecast
+    monthly_discount: float = 0.0  # EUR per month off the bill (e.g. a welcome discount)
 
 
 @dataclass(frozen=True)
@@ -164,6 +165,7 @@ def parse_settings(raw: dict | None) -> CostSettings:
                 start=_date(c["vanaf"]), name=str(c.get("naam", "")),
                 import_price=float(c.get("stroom", 0)), export_price=float(c.get("teruglevering", 0)),
                 gas_price=float(c.get("gas", 0)), fixed_per_day=float(c.get("vast_per_dag", 0)),
+                monthly_discount=float(c.get("korting_per_maand", 0)),
                 dynamic=bool(c.get("dynamisch", False)),
             ) for c in raw.get("contracten") or []), key=lambda c: c.start))
         advances = tuple(Period(_date(a["vanaf"]), None, float(a["bedrag"]))
@@ -237,11 +239,12 @@ class Costs:
     fixed: float = 0.0
     gas: float = 0.0
     power: float = 0.0
-    ev_refund: float = 0.0     # negative: money back
+    ev_refund: float = 0.0     # negative: money back, paid apart by the charge point operator
 
     @property
     def total(self) -> float:
-        return self.fixed + self.gas + self.power + self.ev_refund
+        """Energy costs on the supplier's bill; the wallbox refund is not part of it."""
+        return self.fixed + self.gas + self.power
 
     def __add__(self, other: Costs) -> Costs:
         return Costs(self.fixed + other.fixed, self.gas + other.gas,
@@ -258,7 +261,8 @@ def day_costs(day: date, u: Usage, s: CostSettings) -> Costs:
         power = u.import_cost - (u.export_revenue or 0.0)
     else:
         power = u.import_kwh * c.import_price - u.export_kwh * c.export_price
-    return Costs(c.fixed_per_day, u.gas_m3 * c.gas_price, power, -u.ev_kwh * s.ev_refund(day))
+    fixed = c.fixed_per_day - c.monthly_discount * 12 / 365
+    return Costs(fixed, u.gas_m3 * c.gas_price, power, -u.ev_kwh * s.ev_refund(day))
 
 
 # ---------------------------------------------------------------- forecast
@@ -501,6 +505,8 @@ class YearSummary:
             "heat_pump_kwh": round(u.hp_kwh), "ev_kwh": round(u.ev_kwh),
             "own_use_pct": round(own) if own is not None else None,
             "advances": round(self.advances, 2), "cashback": round(self.cashback, 2),
+            # paid apart by the charge point operator, not part of costs or settlement
+            "ev_refund": round(sum(r.costs.ev_refund for r in self.rows), 2),
             "costs": round(self.costs, 2),
             # positive: pay extra at the final bill; negative: money back
             "expected_settlement": round(self.costs - self.advances, 2),
@@ -611,6 +617,7 @@ def to_csv(summary: YearSummary) -> str:
     lines.append("")
     for label, key in (("Eigen verbruik %", "own_use_pct"), ("Voorschotten", "advances"),
                        ("Cashback", "cashback"), ("Totale kosten", "costs"),
+                       ("Retour laadpaal (apart uitbetaald)", "ev_refund"),
                        ("Verwachte afrekening (+ bijbetalen)", "expected_settlement"),
                        ("Volgens afrekening", "settlement")):
         lines.append(f"{label};{cell(data.get(key))}")
@@ -619,10 +626,10 @@ def to_csv(summary: YearSummary) -> str:
 
 def years_csv(years: list[YearSummary]) -> str:
     head = ("Jaar;Van;Tot;Contract;Compleet;Gas m3;Opwek kWh;Teruglevering kWh;Afname kWh;Verbruik totaal kWh;"
-            "Algemeen kWh;Warmtepomp kWh;Laadpaal kWh;Eigen verbruik %;Voorschotten;Cashback;"
+            "Algemeen kWh;Warmtepomp kWh;Laadpaal kWh;Eigen verbruik %;Voorschotten;Cashback;Retour laadpaal;"
             "Totale kosten;Verwachte afrekening;Volgens afrekening")
     keys = ("year", "from", "to", "contract", "complete", "gas_m3", "pv_kwh", "export_kwh", "import_kwh", "total_kwh",
-            "general_kwh", "heat_pump_kwh", "ev_kwh", "own_use_pct", "advances", "cashback",
+            "general_kwh", "heat_pump_kwh", "ev_kwh", "own_use_pct", "advances", "cashback", "ev_refund",
             "costs", "expected_settlement", "settlement")
     out = [head]
     for y in years:

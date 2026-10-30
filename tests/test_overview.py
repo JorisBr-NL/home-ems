@@ -252,3 +252,18 @@ def test_learn_from_date_uses_a_plain_mean_until_enough_months():
     assert f.predict(date(2026, 12, 1)).gas_m3 == pytest.approx(0.7 * 31)
     with pytest.raises(ValueError):
         ov.parse_settings({"leren_vanaf": {"water": "2026-08-01"}})
+
+
+def test_wallbox_refund_is_outside_the_costs_and_discount_lowers_fixed_costs():
+    s = ov.parse_settings({
+        "contracten": [{"vanaf": "2027-01-16", "dynamisch": True, "vast_per_dag": 0.67,
+                        "korting_per_maand": 15}],
+        "laadpaal_vergoeding": [{"vanaf": "2027-01-01", "tot": "2027-03-31", "per_kwh": 0.40}],
+    })
+    c = ov.day_costs(date(2027, 2, 1), ov.Usage(ev_kwh=10), s)
+    assert c.ev_refund == pytest.approx(-4.0)
+    assert c.total == pytest.approx(0.67 - 15 * 12 / 365)   # refund not in the total
+    days = flat_days(date(2027, 1, 16), date(2027, 3, 31), ev_kwh=10)
+    y = ov.build_overview(days, date(2027, 4, 1), s)[0].as_dict()
+    assert y["ev_refund"] == pytest.approx(-4.0 * 75, abs=0.01)
+    assert y["costs"] == pytest.approx(sum(m["total"] for m in y["months"]), abs=0.05)
