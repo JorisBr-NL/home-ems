@@ -114,7 +114,8 @@ SENSORS: tuple[HomeEmsSensorDescription, ...] = (
         native_unit_of_measurement="EUR",
         suggested_display_precision=0,
         value_fn=lambda c: y["expected_settlement"] if (y := _this_year(c)) else None,
-        attrs_fn=lambda c: {"advances": y["advances"], "costs": y["costs"]} if (y := _this_year(c)) else {},
+        attrs_fn=lambda c: {k: y[k] for k in ("advances", "costs", "cashback", "ev_refund", "net_costs")}
+        if (y := _this_year(c)) else {},
     ),
     HomeEmsSensorDescription(
         key="month_cost_expected",
