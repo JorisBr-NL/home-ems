@@ -235,3 +235,20 @@ def test_forecast_uses_own_solar_month_and_last_wallbox_month():
     jan = f.predict(date(2027, 1, 1))
     assert jan.pv_kwh == pytest.approx((47 + 139) / 2)
     assert jan.ev_kwh == 30
+
+
+def test_learn_from_date_uses_a_plain_mean_until_enough_months():
+    s = ov.parse_settings({"leren_vanaf": {"gas": "2026-08-01"}})
+    assert s.learn_from == {"gas": date(2026, 8, 1)}
+    days = {}
+    d = date(2025, 3, 1)
+    while d < date(2026, 11, 1):
+        temp = ov.NORMAL_TEMP[d.month - 1]
+        gas = 0.7 if d >= date(2026, 8, 1) else 1.5   # guests and holidays before August
+        days[d] = ov.Usage(gas_m3=gas, hp_kwh=0.8 * max(0, 18 - temp), temp_sum=temp, temp_days=1)
+        d += timedelta(days=1)
+    f = ov.Forecaster.learn(ov.by_month(days), s.learn_from)
+    assert f.gas_fit is None and f.hp_fit is not None
+    assert f.predict(date(2026, 12, 1)).gas_m3 == pytest.approx(0.7 * 31)
+    with pytest.raises(ValueError):
+        ov.parse_settings({"leren_vanaf": {"water": "2026-08-01"}})
