@@ -97,8 +97,12 @@ def _write_files(folder: str, files: dict[str, str]) -> None:
         _LOGGER.warning("Folder for the overview CSV files does not exist: %s", folder)
         return
     for name, text in files.items():
+        target = path / name
+        # only when changed, so finished years keep their date and are not copied again
+        if target.is_file() and target.read_text(encoding="utf-8-sig") == text:
+            continue
         # utf-8 with BOM so Excel shows m³ and € correctly
-        (path / name).write_text(text, encoding="utf-8-sig")
+        target.write_text(text, encoding="utf-8-sig")
 
 STORAGE_VERSION = 1
 SAVE_DELAY = 60  # seconds

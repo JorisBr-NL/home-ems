@@ -196,7 +196,7 @@ De entity-id's volgen de taal van HA bij het aanmaken (in het Nederlands bijvoor
 
 **Handmatige perioden:** voor maanden van vóór de HA-statistieken (of met foute statistieken) vul je onder `handmatig` de cijfers zelf in, per maand of per periode. Die vervangen de statistieken van die dagen. `temp` (gemiddelde buitentemperatuur) helpt de voorspelling van warmtepomp en gas.
 
-**CSV:** als er een map is ingesteld (standaard `/share/energie`), schrijft Home EMS elk uur `energy_overzicht_JJJJ.csv` per jaar en `energy_overzicht_jaren.csv`, met puntkomma's en een decimale komma zodat Excel (NL) ze direct opent.
+**CSV:** als er een map is ingesteld (standaard `/share/energie`), werkt Home EMS elk uur bij (alleen als de inhoud veranderd is, dus afgesloten jaren blijven ongemoeid) `energy_overzicht_JJJJ.csv` per jaar en `energy_overzicht_jaren.csv`, met puntkomma's en een decimale komma zodat Excel (NL) ze direct opent.
 
 **Instellen:** *Configureren* → *Energie- en kostenoverzicht*. Kies de sensoren (dezelfde als in het Energy-dashboard; voor de kostenvelden kun je ook een statistiek zonder sensor kiezen, zoals die van Tibber) en vul de contracten in als YAML:
 
