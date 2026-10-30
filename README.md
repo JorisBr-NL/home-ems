@@ -204,38 +204,40 @@ De entity-id's volgen de taal van HA bij het aanmaken (in het Nederlands bijvoor
 # prijzen all-in (incl. energiebelasting en btw); vast_per_dag = vaste kosten + netbeheer
 # - vermindering energiebelasting, per dag
 contracten:
-  - naam: Vast 2026
-    vanaf: 2026-01-14
-    stroom: 0.228
-    teruglevering: 0.15   # per kWh netto-overschot onder saldering, en per kWh na saldering
-    gas: 1.205
-    vast_per_dag: 2.593   # incl. terugleverkosten, netbeheer en vermindering energiebelasting
-  - naam: Tibber
-    vanaf: 2027-01-16
+  - naam: Vast contract
+    vanaf: 2026-01-01
+    stroom: 0.25
+    teruglevering: 0.10   # per kWh netto-overschot onder saldering, en per kWh na saldering
+    gas: 1.20
+    vast_per_dag: 2.50    # incl. eventuele terugleverkosten, netbeheer en vermindering energiebelasting
+  - naam: Dynamisch contract
+    vanaf: 2027-02-01
     dynamisch: true
-    stroom: 0.25          # verwachte gemiddelde inkoopprijs (alleen voor de voorspelling)
+    stroom: 0.24          # verwachte gemiddelde inkoopprijs (alleen voor de voorspelling)
     teruglevering: 0.05   # verwachte gemiddelde terugleverprijs
-    gas: 1.24
-    vast_per_dag: 0.67
-    korting_per_maand: 15 # korting op de maandfactuur (wordt per dag verrekend in de vaste kosten)
+    gas: 1.25
+    vast_per_dag: 0.70
+    korting_per_maand: 10 # korting op de maandfactuur (wordt per dag verrekend in de vaste kosten)
 saldering_tot: 2026-12-31
 voorschotten:
-  - vanaf: 2026-01-14
-    bedrag: 123
+  - vanaf: 2026-01-01
+    bedrag: 150
+  - vanaf: 2027-02-01     # maandelijkse facturering van de werkelijke kosten: geen voorschot
+    bedrag: 0
 laadpaal_vergoeding:      # per geladen kWh, apart uitbetaald (bijv. door de laadpaaloperator); staat als
                           # losse kolom in het overzicht, maar telt niet mee in de kosten of de afrekening
-  - vanaf: 2025-12-01
-    tot: 2026-08-31
-    per_kwh: 0.40
+  - vanaf: 2026-01-01
+    tot: 2026-06-30
+    per_kwh: 0.35
 cashback:                 # per contractjaar (jaar van de startdatum), gaat van de jaarkosten af
-  2026: 390
+  2026: 200
 afrekening:               # werkelijke eindafrekening per contractjaar (jaar van de startdatum)
-  2025: 1854
-leren_vanaf:              # de voorspelling leert pas vanaf deze maand (bijv. na een verbouwing,
-  gas: 2026-08-01         # logés of een vakantie); minder dan 6 maanden = gemiddelde per dag
+  2025: 1500
+leren_vanaf:              # de voorspelling leert pas vanaf deze maand (bijv. na een verbouwing of
+  gas: 2026-06-01         # een andere verandering); minder dan 6 maanden = gemiddelde per dag
 handmatig:                # perioden zonder (goede) statistieken
-  2025-12: {gas: 54, opwek: 161, teruglevering: 48, afname: 1386, warmtepomp: 539, laadpaal: 394, temp: 5.6}
-  2026-01-01/2026-01-13: {gas: 38, opwek: 37, teruglevering: 5, afname: 871, warmtepomp: 447, laadpaal: 140, temp: 0.1}
+  2025-12: {gas: 50, opwek: 150, teruglevering: 50, afname: 900, warmtepomp: 450, laadpaal: 0, temp: 5.0}
+  2026-01-01/2026-01-15: {gas: 25, opwek: 60, teruglevering: 10, afname: 500, warmtepomp: 260, laadpaal: 0, temp: 3.0}
 ```
 
 **Dashboardkaart** (Markdown-kaart; pas de entity-id aan):
