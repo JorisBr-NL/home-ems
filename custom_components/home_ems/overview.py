@@ -475,7 +475,17 @@ class YearSummary:
 
     @property
     def costs(self) -> float:
-        return sum(r.costs.total for r in self.rows) - self.cashback
+        """Costs on the supplier's bill (cashback and wallbox refund are paid apart)."""
+        return sum(r.costs.total for r in self.rows)
+
+    @property
+    def ev_refund(self) -> float:
+        return sum(r.costs.ev_refund for r in self.rows)
+
+    @property
+    def net_costs(self) -> float:
+        """What energy costs in the end: the bill minus cashback and wallbox refund."""
+        return self.costs - self.cashback + self.ev_refund
 
     @property
     def advances(self) -> float:
@@ -504,10 +514,11 @@ class YearSummary:
             "total_kwh": round(u.total_kwh), "general_kwh": round(u.general_kwh),
             "heat_pump_kwh": round(u.hp_kwh), "ev_kwh": round(u.ev_kwh),
             "own_use_pct": round(own) if own is not None else None,
-            "advances": round(self.advances, 2), "cashback": round(self.cashback, 2),
-            # paid apart by the charge point operator, not part of costs or settlement
-            "ev_refund": round(sum(r.costs.ev_refund for r in self.rows), 2),
-            "costs": round(self.costs, 2),
+            "advances": round(self.advances, 2),
+            # cashback (supplier) and wallbox refund (charge point operator) are paid apart:
+            # not part of the costs on the bill or the settlement, only of the net costs
+            "cashback": round(self.cashback, 2), "ev_refund": round(self.ev_refund, 2),
+            "costs": round(self.costs, 2), "net_costs": round(self.net_costs, 2),
             # positive: pay extra at the final bill; negative: money back
             "expected_settlement": round(self.costs - self.advances, 2),
             "settlement": self.settlement, "months": months,
@@ -616,10 +627,12 @@ def to_csv(summary: YearSummary) -> str:
     lines += [";".join(cell(m.get(k)) for _, k in CSV_COLUMNS) for m in data["months"]]
     lines.append("")
     for label, key in (("Eigen verbruik %", "own_use_pct"), ("Voorschotten", "advances"),
-                       ("Cashback", "cashback"), ("Totale kosten", "costs"),
-                       ("Retour laadpaal (apart uitbetaald)", "ev_refund"),
+                       ("Totale kosten (rekening leverancier)", "costs"),
                        ("Verwachte afrekening (+ bijbetalen)", "expected_settlement"),
-                       ("Volgens afrekening", "settlement")):
+                       ("Volgens afrekening", "settlement"),
+                       ("Cashback (apart uitbetaald)", "cashback"),
+                       ("Retour laadpaal (apart uitbetaald)", "ev_refund"),
+                       ("Netto kosten (na cashback en retour laadpaal)", "net_costs")):
         lines.append(f"{label};{cell(data.get(key))}")
     return "\n".join(lines) + "\n"
 
@@ -627,10 +640,10 @@ def to_csv(summary: YearSummary) -> str:
 def years_csv(years: list[YearSummary]) -> str:
     head = ("Jaar;Van;Tot;Contract;Compleet;Gas m3;Opwek kWh;Teruglevering kWh;Afname kWh;Verbruik totaal kWh;"
             "Algemeen kWh;Warmtepomp kWh;Laadpaal kWh;Eigen verbruik %;Voorschotten;Cashback;Retour laadpaal;"
-            "Totale kosten;Verwachte afrekening;Volgens afrekening")
+            "Totale kosten;Verwachte afrekening;Volgens afrekening;Netto kosten")
     keys = ("year", "from", "to", "contract", "complete", "gas_m3", "pv_kwh", "export_kwh", "import_kwh", "total_kwh",
             "general_kwh", "heat_pump_kwh", "ev_kwh", "own_use_pct", "advances", "cashback", "ev_refund",
-            "costs", "expected_settlement", "settlement")
+            "costs", "expected_settlement", "settlement", "net_costs")
     out = [head]
     for y in years:
         d = y.as_dict()

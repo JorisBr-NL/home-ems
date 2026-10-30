@@ -6,7 +6,7 @@ Eigen energiemanagementsysteem voor Home Assistant: stuurt (straks) de Quatt-war
 
 Het ontwerp staat in Obsidian (`Projects/Energie/EMS ontwerp.md`); de analyse waarop de standaardwaarden zijn gebaseerd in `Projects/Energie/Analyse runs en flowmeter.md`.
 
-## Status: versie 0.4.2 – observatiemodus
+## Status: versie 0.4.3 – observatiemodus
 
 Home EMS leest sensoren uit en laat zien wat het **zou** doen. Het schrijft niets naar apparaten; je bestaande automatiseringen blijven leidend.
 
@@ -176,14 +176,14 @@ Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kie
 Vervangt een zelf bijgehouden Excel-overzicht. Home EMS leest elk uur de langetermijnstatistieken van HA (per dag) en maakt per maand en per **contractjaar** (zoals op de jaarafrekening: van de startdatum van een contract tot de dag voor het volgende contract, of per jaar vanaf de startdatum; een maand waarin het contract wisselt, wordt gesplitst):
 
 - **meten:** gas, opwek, teruglevering, afname, afname − teruglevering, verbruik totaal / algemeen / warmtepomp / laadpaal, eigen verbruik % (= (opwek − teruglevering) / opwek), gemiddelde buitentemperatuur;
-- **kosten:** vaste kosten, gas, stroom, laadpaalvergoeding, totaal, voorschot, cumulatief totaal en voorschot, cashback, verwachte eindafrekening;
+- **kosten:** vaste kosten, gas, stroom, totaal, voorschot, cumulatief totaal en voorschot, verwachte eindafrekening; apart uitbetaald: cashback en laadpaalvergoeding, en de netto kosten daarna;
 - **voorspelling** voor de rest van het jaar: de lopende maand is werkelijk tot vandaag plus de voorspelling voor de resterende dagen. Opwek is de eigen opbrengst van die maand in eerdere jaren (anders een NL-profiel, geschaald op de eigen jaaropbrengst). Warmtepomp en gas komen uit een regressie op graaddagen over de laatste 12 volle maanden (sinds de warmtepomp er is), met normaaltemperaturen De Bilt 1991–2020. Algemeen verbruik is dezelfde maand eerder, met de trend van de laatste maanden. Laadpaal: de laatste volle maand. Met `leren_vanaf` (gas, warmtepomp, algemeen, opwek) leert de voorspelling pas vanaf een bepaalde maand; zijn dat er nog minder dan 6, dan geldt het gemiddelde per dag over die maanden.
 
 Stroomkosten: tot en met `saldering_tot` per dag (afname − teruglevering) × tarief (mag negatief); levert een jaar netto meer terug dan het afneemt, dan krijgt dat overschot alleen de `teruglevering`-prijs (correctie in de laatste salderingsmaand van dat jaar). Daarna afname × inkoopprijs − teruglevering × terugleverprijs. Bij een dynamisch contract tellen de werkelijke kostenstatistieken (bijvoorbeeld van de Tibber-integratie), en de prijzen in de YAML zijn dan alleen de verwachting voor de voorspelling.
 
 | Entiteit | Betekenis |
 |---|---|
-| `sensor.home_ems_year_cost_expected` | verwachte energiekosten van het lopende contractjaar (werkelijk + voorspelling − cashback); attributen `months` (de maandtabel), `years`, `from`, `to` en `contract` |
+| `sensor.home_ems_year_cost_expected` | verwachte energiekosten op de rekening van de leverancier voor het lopende contractjaar (werkelijk + voorspelling); attribuut `net_costs` = na aftrek van cashback en laadpaalvergoeding; attributen `months` (de maandtabel), `years`, `from`, `to` en `contract` |
 | `sensor.home_ems_settlement_expected` | verwachte eindafrekening: kosten − voorschotten (positief = bijbetalen) |
 | `sensor.home_ems_month_cost_expected` | verwachte kosten van de lopende maand, met de maandregel als attributen |
 | `sensor.home_ems_own_use_year` | eigen verbruik van zonnestroom dit jaar (%) |
@@ -229,7 +229,7 @@ laadpaal_vergoeding:      # per geladen kWh, apart uitbetaald (bijv. door de laa
   - vanaf: 2026-01-01
     tot: 2026-06-30
     per_kwh: 0.35
-cashback:                 # per contractjaar (jaar van de startdatum), gaat van de jaarkosten af
+cashback:                 # per contractjaar (jaar van de startdatum), apart uitbetaald: telt alleen mee in de netto kosten
   2026: 200
 afrekening:               # werkelijke eindafrekening per contractjaar (jaar van de startdatum)
   2025: 1500
@@ -254,7 +254,7 @@ content: >
   | {{ m.month }}{{ ' (' ~ m.days ~ ')' if m.days }}{{ ' *' if m.status != 'actual' }} | {{ m.gas_m3 | round(0) }} | {{ m.pv_kwh }} | {{ m.export_kwh }} | {{ m.import_kwh }} | {{ m.heat_pump_kwh }} | {{ m.ev_kwh }} | {{ m.total | round(0) }} | {{ m.cum_total | round(0) }} | {{ m.cum_advance | round(0) }} |
   {% endfor %}
 
-  \* = (deels) voorspelling. Verwachte kosten **€ {{ states(s) | round(0) }}**, voorschotten € {{ state_attr(s, 'advances') | round(0) }}, verwachte afrekening **€ {{ state_attr(s, 'expected_settlement') | round(0) }}**, eigen verbruik {{ state_attr(s, 'own_use_pct') }}%.
+  \* = (deels) voorspelling. Verwachte kosten **€ {{ states(s) | round(0) }}**, voorschotten € {{ state_attr(s, 'advances') | round(0) }}, verwachte afrekening **€ {{ state_attr(s, 'expected_settlement') | round(0) }}**, netto na cashback en laadpaalvergoeding € {{ state_attr(s, 'net_costs') | round(0) }}, eigen verbruik {{ state_attr(s, 'own_use_pct') }}%.
 ```
 
 ## Installeren via HACS

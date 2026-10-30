@@ -128,9 +128,11 @@ def test_build_overview_actual_running_and_forecast_months():
     assert oct_row.usage.temp_days == 31
     d = y25.as_dict()
     assert d["cashback"] == 300 and d["settlement"] == 1500
-    assert d["costs"] == pytest.approx(sum(r.costs.total for r in y25.rows) - 300, abs=0.01)
+    # cashback and wallbox refund are paid apart: not on the bill, only in the net costs
+    assert d["costs"] == pytest.approx(sum(r.costs.total for r in y25.rows), abs=0.01)
     assert d["months"][-1]["cum_advance"] == 12 * 250
     assert d["expected_settlement"] == pytest.approx(d["costs"] - d["advances"], abs=0.01)
+    assert d["net_costs"] == pytest.approx(d["costs"] - 300 + d["ev_refund"], abs=0.01)
 
 
 def test_net_export_surplus_of_a_year_earns_the_export_price():
