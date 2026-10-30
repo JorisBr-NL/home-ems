@@ -86,6 +86,7 @@ class Contract:
     fixed_per_day: float = 0.0     # supplier + grid operator - energy tax reduction, per day
     dynamic: bool = False          # prices above are then only expectations for the forecast
     monthly_discount: float = 0.0  # EUR per month off the bill (e.g. a welcome discount)
+    calendar_years: bool = False   # years end on 31 Dec (monthly billing) instead of on the anniversary
 
 
 @dataclass(frozen=True)
@@ -154,6 +155,14 @@ def _manual_usage(span: tuple[date, date], v: dict) -> Usage:
     )
 
 
+def _calendar(value) -> bool:
+    """`jaren: kalender` or `jaren: contract` (the default)."""
+    text = str(value).strip().lower()
+    if text not in ("kalender", "contract"):
+        raise ValueError(f"jaren must be 'kalender' or 'contract', not {value!r}")
+    return text == "kalender"
+
+
 def parse_settings(raw: dict | None) -> CostSettings:
     """Settings from the YAML in the options (Dutch keys). Raises ValueError on bad input."""
     raw = raw or {}
@@ -166,6 +175,7 @@ def parse_settings(raw: dict | None) -> CostSettings:
                 import_price=float(c.get("stroom", 0)), export_price=float(c.get("teruglevering", 0)),
                 gas_price=float(c.get("gas", 0)), fixed_per_day=float(c.get("vast_per_dag", 0)),
                 monthly_discount=float(c.get("korting_per_maand", 0)),
+                calendar_years=_calendar(c.get("jaren", "contract")),
                 dynamic=bool(c.get("dynamisch", False)),
             ) for c in raw.get("contracten") or []), key=lambda c: c.start))
         advances = tuple(Period(_date(a["vanaf"]), None, float(a["bedrag"]))
@@ -529,15 +539,19 @@ def settlement_years(s: CostSettings, until: date) -> list[tuple[date, date, str
     """(start, end, contract name) per settlement year up to the one containing `until`.
 
     A contract runs to the day before the next one; a contract longer than a year
-    (or the last one) is cut into years from its start date. A remainder of up to a
-    month is added to the last year instead of becoming a year of its own."""
+    (or the last one) is cut into years from its start date, or into calendar years
+    with `jaren: kalender` (the first year then ends on 31 December). A remainder of
+    up to a month is added to the last year instead of becoming a year of its own."""
     out = []
     contracts = list(s.contracts)
     for i, c in enumerate(contracts):
         stop = contracts[i + 1].start - timedelta(days=1) if i + 1 < len(contracts) else None
         start = c.start
         while start <= until and (stop is None or start <= stop):
-            nxt = start.replace(year=start.year + 1) - timedelta(days=1)
+            if c.calendar_years:
+                nxt = date(start.year, 12, 31)
+            else:
+                nxt = start.replace(year=start.year + 1) - timedelta(days=1)
             if stop is not None and (nxt >= stop or (stop - nxt).days <= 31):
                 nxt = stop
             out.append((start, nxt, c.name))

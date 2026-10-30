@@ -6,7 +6,7 @@ Eigen energiemanagementsysteem voor Home Assistant: stuurt (straks) de Quatt-war
 
 Het ontwerp staat in Obsidian (`Projects/Energie/EMS ontwerp.md`); de analyse waarop de standaardwaarden zijn gebaseerd in `Projects/Energie/Analyse runs en flowmeter.md`.
 
-## Status: versie 0.4.3 – observatiemodus
+## Status: versie 0.4.4 – observatiemodus
 
 Home EMS leest sensoren uit en laat zien wat het **zou** doen. Het schrijft niets naar apparaten; je bestaande automatiseringen blijven leidend.
 
@@ -173,7 +173,7 @@ Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kie
 
 ### Energie- en kostenoverzicht (v0.4)
 
-Vervangt een zelf bijgehouden Excel-overzicht. Home EMS leest elk uur de langetermijnstatistieken van HA (per dag) en maakt per maand en per **contractjaar** (zoals op de jaarafrekening: van de startdatum van een contract tot de dag voor het volgende contract, of per jaar vanaf de startdatum; een maand waarin het contract wisselt, wordt gesplitst):
+Vervangt een zelf bijgehouden Excel-overzicht. Home EMS leest elk uur de langetermijnstatistieken van HA (per dag) en maakt per maand en per **contractjaar** (zoals op de jaarafrekening: van de startdatum van een contract tot de dag voor het volgende contract, of per jaar vanaf de startdatum; met `jaren: kalender` bij een contract per kalenderjaar, handig bij maandelijkse facturering; een maand waarin het contract wisselt, wordt gesplitst):
 
 - **meten:** gas, opwek, teruglevering, afname, afname − teruglevering, verbruik totaal / algemeen / warmtepomp / laadpaal, eigen verbruik % (= (opwek − teruglevering) / opwek), gemiddelde buitentemperatuur;
 - **kosten:** vaste kosten, gas, stroom, totaal, voorschot, cumulatief totaal en voorschot, verwachte eindafrekening; apart uitbetaald: cashback en laadpaalvergoeding, en de netto kosten daarna;
@@ -218,6 +218,7 @@ contracten:
     gas: 1.25
     vast_per_dag: 0.70
     korting_per_maand: 10 # korting op de maandfactuur (wordt per dag verrekend in de vaste kosten)
+    jaren: kalender       # jaren tot 31 december in plaats van per contractjaar (standaard: contract)
 saldering_tot: 2026-12-31
 voorschotten:
   - vanaf: 2026-01-01
