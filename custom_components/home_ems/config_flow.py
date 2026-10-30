@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 import voluptuous as vol
+import yaml
 
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
@@ -18,22 +19,39 @@ from .const import (
     CONF_KITCHEN_CLIMATE,
     CONF_LIVING_CLIMATE,
     CONF_OUTSIDE_TEMPERATURE,
+    COST_SETTINGS_EXAMPLE,
     DOMAIN,
     NAME,
     OPT_BASE_LOAD,
     OPT_COMFORT_SETPOINT,
+    OPT_COST_SETTINGS,
+    OPT_EXPORT_DIR,
     OPT_FLOOR_MIN_MARGIN,
     OPT_FLOOR_RULE_BAND,
     OPT_MAX_GAP,
     OPT_MIN_RUN,
+    OPT_OVERVIEW_FROM,
     OPT_PEAK_END,
     OPT_PEAK_START,
     OPT_PRICE_ENTITY,
     OPT_PV_RUN_THRESHOLD,
     OPT_SOLAR_ENTITY,
+    OPT_STAT_EV,
+    OPT_STAT_EXPORT,
+    OPT_STAT_EXPORT_REVENUE,
+    OPT_STAT_GAS,
+    OPT_STAT_HEAT_PUMP,
+    OPT_STAT_IMPORT,
+    OPT_STAT_IMPORT_COST,
+    OPT_STAT_OUTSIDE,
+    OPT_STAT_PV,
     OPT_WEATHER_ENTITY,
     OPTION_DEFAULTS,
+    OVERVIEW_OPTIONS,
 )
+from .overview import parse_settings
+
+PLANNER_OPTIONS = (OPT_PRICE_ENTITY, OPT_SOLAR_ENTITY, OPT_WEATHER_ENTITY, *OPTION_DEFAULTS)
 
 CLIMATE = selector.EntitySelector(selector.EntitySelectorConfig(domain="climate"))
 POWER = selector.EntitySelector(
@@ -92,17 +110,61 @@ def _number(min_: float, max_: float, step: float | str, unit: str | None = None
     return selector.NumberSelector(config)
 
 
+def _optional(current: dict[str, Any], key: str) -> vol.Optional:
+    # suggested_value instead of default, so a value can also be cleared
+    return vol.Optional(key, description={"suggested_value": current.get(key)})
+
+
+def _statistic(multiple: bool = False) -> selector.StatisticSelector:
+    return selector.StatisticSelector(selector.StatisticSelectorConfig(multiple=multiple))
+
+
 class HomeEmsOptionsFlow(OptionsFlow):
-    """Data sources for the planner and the thresholds of the advice."""
+    """Two screens: the planner and advice, and the energy and cost overview."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return self.async_show_menu(step_id="init", menu_options=["planner", "overview"])
+
+    def _save(self, keys: tuple[str, ...], user_input: dict[str, Any]) -> ConfigFlowResult:
+        """Keep the options of the other screen; cleared fields are dropped."""
+        options = {k: v for k, v in self.config_entry.options.items() if k not in keys}
+        return self.async_create_entry(data={**options, **user_input})
+
+    async def async_step_overview(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(data=user_input)
+            try:
+                parse_settings(yaml.safe_load(user_input.get(OPT_COST_SETTINGS) or "") or {})
+            except (yaml.YAMLError, ValueError):
+                errors[OPT_COST_SETTINGS] = "invalid_cost_settings"
+            else:
+                return self._save(OVERVIEW_OPTIONS, user_input)
+        current = {OPT_COST_SETTINGS: COST_SETTINGS_EXAMPLE, OPT_EXPORT_DIR: "/share/energie",
+                   **self.config_entry.options, **(user_input or {})}
+        schema = vol.Schema({
+            _optional(current, OPT_STAT_IMPORT): _statistic(multiple=True),
+            _optional(current, OPT_STAT_EXPORT): _statistic(multiple=True),
+            _optional(current, OPT_STAT_PV): _statistic(multiple=True),
+            _optional(current, OPT_STAT_GAS): _statistic(),
+            _optional(current, OPT_STAT_HEAT_PUMP): _statistic(multiple=True),
+            _optional(current, OPT_STAT_EV): _statistic(),
+            _optional(current, OPT_STAT_OUTSIDE): _statistic(),
+            _optional(current, OPT_STAT_IMPORT_COST): _statistic(),
+            _optional(current, OPT_STAT_EXPORT_REVENUE): _statistic(),
+            _optional(current, OPT_OVERVIEW_FROM): selector.DateSelector(),
+            _optional(current, OPT_COST_SETTINGS): selector.TextSelector(
+                selector.TextSelectorConfig(multiline=True)),
+            _optional(current, OPT_EXPORT_DIR): selector.TextSelector(),
+        })
+        return self.async_show_form(step_id="overview", data_schema=schema, errors=errors)
+
+    async def async_step_planner(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            return self._save(PLANNER_OPTIONS, user_input)
         current = {**OPTION_DEFAULTS, **self.config_entry.options}
 
         def entity(key: str) -> vol.Optional:
-            # suggested_value instead of default, so an entity can also be cleared
-            return vol.Optional(key, description={"suggested_value": current.get(key)})
+            return _optional(current, key)
 
         schema = vol.Schema({
             entity(OPT_PRICE_ENTITY): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
@@ -118,4 +180,4 @@ class HomeEmsOptionsFlow(OptionsFlow):
             vol.Required(OPT_MAX_GAP, default=current[OPT_MAX_GAP]): _number(2, 24, 0.5, "h"),
             vol.Required(OPT_BASE_LOAD, default=current[OPT_BASE_LOAD]): _number(0, 3, 0.05, "kW"),
         })
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(step_id="planner", data_schema=schema)

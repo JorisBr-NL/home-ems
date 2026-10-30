@@ -6,7 +6,7 @@ Eigen energiemanagementsysteem voor Home Assistant: stuurt (straks) de Quatt-war
 
 Het ontwerp staat in Obsidian (`Projects/Energie/EMS ontwerp.md`); de analyse waarop de standaardwaarden zijn gebaseerd in `Projects/Energie/Analyse runs en flowmeter.md`.
 
-## Status: versie 0.3.1 – observatiemodus
+## Status: versie 0.4.0 – observatiemodus
 
 Home EMS leest sensoren uit en laat zien wat het **zou** doen. Het schrijft niets naar apparaten; je bestaande automatiseringen blijven leidend.
 
@@ -167,9 +167,81 @@ series:
 
 Het plan (paars) loopt vanaf nu; wat er eerder gebeurde, zie je aan de grijze blokken.
 
-### Instellingen (v0.3)
+### Instellingen (v0.3, v0.4)
 
-Via **Instellingen → Apparaten en diensten → Home EMS → Configureren**: de databronnen hierboven, comfortsetpoint, de band voor de vloerregel, minimale vloermarge, PV-overschot voor een run, minimale runtijd, het avondpiekvenster, de langste tijd zonder run en het basisverbruik van het huis. Wijzigingen gelden direct.
+Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kies je *Planner en advies* of *Energie- en kostenoverzicht*. Onder het eerste: de databronnen hierboven, comfortsetpoint, de band voor de vloerregel, minimale vloermarge, PV-overschot voor een run, minimale runtijd, het avondpiekvenster, de langste tijd zonder run en het basisverbruik van het huis. Wijzigingen gelden direct.
+
+### Energie- en kostenoverzicht (v0.4)
+
+Vervangt een zelf bijgehouden Excel-overzicht. Home EMS leest elk uur de langetermijnstatistieken van HA (per dag) en maakt per maand en per jaar:
+
+- **meten:** gas, opwek, teruglevering, afname, afname − teruglevering, verbruik totaal / algemeen / warmtepomp / laadpaal, eigen verbruik % (= (opwek − teruglevering) / opwek), gemiddelde buitentemperatuur;
+- **kosten:** vaste kosten, gas, stroom, laadpaalvergoeding, totaal, voorschot, cumulatief totaal en voorschot, cashback, verwachte eindafrekening;
+- **voorspelling** voor de rest van het jaar: de lopende maand is werkelijk tot vandaag plus de voorspelling voor de resterende dagen. Opwek volgt een NL-profiel per maand, geschaald op de eigen opbrengst. Warmtepomp en gas komen uit een regressie op graaddagen sinds de warmtepomp er is, met normaaltemperaturen De Bilt 1991–2020. Algemeen verbruik is de zelfde maand eerder, met de trend van de laatste maanden. Laadpaal: gemiddelde van de laatste 3 maanden.
+
+Stroomkosten: tot en met `saldering_tot` per dag (afname − teruglevering) × tarief (mag negatief); daarna afname × inkoopprijs − teruglevering × terugleverprijs. Bij een dynamisch contract tellen de werkelijke kostenstatistieken (bijvoorbeeld van de Tibber-integratie), en de prijzen in de YAML zijn dan alleen de verwachting voor de voorspelling.
+
+| Entiteit | Betekenis |
+|---|---|
+| `sensor.home_ems_year_cost_expected` | verwachte energiekosten dit jaar (werkelijk + voorspelling − cashback); attributen `months` (de maandtabel) en `years` |
+| `sensor.home_ems_settlement_expected` | verwachte eindafrekening: kosten − voorschotten (positief = bijbetalen) |
+| `sensor.home_ems_month_cost_expected` | verwachte kosten van de lopende maand, met de maandregel als attributen |
+| `sensor.home_ems_own_use_year` | eigen verbruik van zonnestroom dit jaar (%) |
+| `sensor.home_ems_year_use_expected` | verwacht stroomverbruik dit jaar, met opwek, teruglevering, afname, warmtepomp, laadpaal en gas als attributen |
+| `sensor.home_ems_overview_status` | `ok`, `not_configured`, `no_statistics` of `invalid_cost_settings` |
+
+De entity-id's volgen de taal van HA bij het aanmaken (in het Nederlands bijvoorbeeld `sensor.home_ems_verwachte_energiekosten_dit_jaar`).
+
+**CSV:** als er een map is ingesteld (standaard `/share/energie`), schrijft Home EMS elk uur `energy_overzicht_JJJJ.csv` per jaar en `energy_overzicht_jaren.csv`, met puntkomma's en een decimale komma zodat Excel (NL) ze direct opent.
+
+**Instellen:** *Configureren* → *Energie- en kostenoverzicht*. Kies de statistieken (dezelfde als in het Energy-dashboard) en vul de contracten in als YAML:
+
+```yaml
+# prijzen all-in (incl. energiebelasting en btw); vast_per_dag = vaste kosten + netbeheer
+# - vermindering energiebelasting, per dag
+contracten:
+  - naam: Vast 2026
+    vanaf: 2026-01-14
+    stroom: 0.2285
+    gas: 1.21
+    vast_per_dag: 2.58
+  - naam: Tibber
+    vanaf: 2027-01-16
+    dynamisch: true
+    stroom: 0.25          # verwachte gemiddelde inkoopprijs (alleen voor de voorspelling)
+    teruglevering: 0.06   # verwachte gemiddelde terugleverprijs
+    gas: 1.25
+    vast_per_dag: 2.60
+saldering_tot: 2026-12-31
+voorschotten:
+  - vanaf: 2026-01-14
+    bedrag: 123
+laadpaal_vergoeding:      # per geladen kWh, bijvoorbeeld van een werkgever
+  - vanaf: 2025-12-01
+    tot: 2026-08-31
+    per_kwh: 0.40
+cashback:
+  2026: 390
+afrekening:               # werkelijke eindafrekening, ter vergelijking
+  2025: 1854
+```
+
+**Dashboardkaart** (Markdown-kaart; pas de entity-id aan):
+
+```yaml
+type: markdown
+title: Energie dit jaar
+content: >
+  {% set s = 'sensor.home_ems_verwachte_energiekosten_dit_jaar' %}
+  {% set y = state_attr(s, 'months') or [] %}
+  | Maand | Gas | Opwek | Terug | Afname | WP | Laadpaal | Totaal € | Cum € | Cum voorschot € |
+  |---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+  {% for m in y -%}
+  | {{ m.month }}{{ ' *' if m.status != 'actual' }} | {{ m.gas_m3 | round(0) }} | {{ m.pv_kwh }} | {{ m.export_kwh }} | {{ m.import_kwh }} | {{ m.heat_pump_kwh }} | {{ m.ev_kwh }} | {{ m.total | round(0) }} | {{ m.cum_total | round(0) }} | {{ m.cum_advance | round(0) }} |
+  {% endfor %}
+
+  \* = (deels) voorspelling. Verwachte kosten **€ {{ states(s) | round(0) }}**, voorschotten € {{ state_attr(s, 'advances') | round(0) }}, verwachte afrekening **€ {{ state_attr(s, 'expected_settlement') | round(0) }}**, eigen verbruik {{ state_attr(s, 'own_use_pct') }}%.
+```
 
 ## Installeren via HACS
 
@@ -188,4 +260,4 @@ python -m pip install -r requirements_test.txt
 python -m pytest
 ```
 
-De rekenlogica staat in `custom_components/home_ems/model.py` en heeft geen Home Assistant nodig, zodat die los te testen is.
+De rekenlogica staat in `model.py`, `planner.py` en `overview.py` (in `custom_components/home_ems/`) en heeft geen Home Assistant nodig, zodat die los te testen is.

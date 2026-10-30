@@ -11,12 +11,19 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import EntityCategory, UnitOfEnergy, UnitOfPower, UnitOfTemperature, UnitOfTime
+from homeassistant.const import (
+    PERCENTAGE,
+    EntityCategory,
+    UnitOfEnergy,
+    UnitOfPower,
+    UnitOfTemperature,
+    UnitOfTime,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
-from .const import PLAN_STATUSES
+from .const import OVERVIEW_STATUSES, PLAN_STATUSES
 from .coordinator import HomeEmsConfigEntry, HomeEmsCoordinator
 from .entity import HomeEmsEntity
 from .model import Advice
@@ -58,7 +65,77 @@ def _plan_attrs(c: HomeEmsCoordinator) -> dict[str, Any]:
     }
 
 
+def _this_year(c: HomeEmsCoordinator) -> dict[str, Any] | None:
+    year = dt_util.now().year
+    return next((y.as_dict() for y in c.overview if y.year == year), None)
+
+
+def _this_month(c: HomeEmsCoordinator) -> dict[str, Any] | None:
+    year = _this_year(c)
+    return next((m for m in year["months"] if m["status"] == "running"), None) if year else None
+
+
+def _year_attrs(c: HomeEmsCoordinator) -> dict[str, Any]:
+    year = _this_year(c)
+    if year is None:
+        return {"status": c.overview_status}
+    summary = {k: v for k, v in year.items() if k != "months"}
+    return summary | {
+        "status": c.overview_status,
+        "months": year["months"],
+        "years": [{k: v for k, v in y.as_dict().items() if k != "months"} for y in c.overview],
+    }
+
+
 SENSORS: tuple[HomeEmsSensorDescription, ...] = (
+    # --- energy and cost overview (v0.4)
+    HomeEmsSensorDescription(
+        key="overview_status",
+        device_class=SensorDeviceClass.ENUM,
+        options=OVERVIEW_STATUSES,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda c: c.overview_status,
+    ),
+    HomeEmsSensorDescription(
+        key="year_cost_expected",
+        device_class=SensorDeviceClass.MONETARY,
+        native_unit_of_measurement="EUR",
+        suggested_display_precision=0,
+        value_fn=lambda c: y["costs"] if (y := _this_year(c)) else None,
+        attrs_fn=_year_attrs,
+    ),
+    HomeEmsSensorDescription(
+        key="settlement_expected",
+        device_class=SensorDeviceClass.MONETARY,
+        native_unit_of_measurement="EUR",
+        suggested_display_precision=0,
+        value_fn=lambda c: y["expected_settlement"] if (y := _this_year(c)) else None,
+        attrs_fn=lambda c: {"advances": y["advances"], "costs": y["costs"]} if (y := _this_year(c)) else {},
+    ),
+    HomeEmsSensorDescription(
+        key="month_cost_expected",
+        device_class=SensorDeviceClass.MONETARY,
+        native_unit_of_measurement="EUR",
+        suggested_display_precision=0,
+        value_fn=lambda c: m["total"] if (m := _this_month(c)) else None,
+        attrs_fn=lambda c: _this_month(c) or {},
+    ),
+    HomeEmsSensorDescription(
+        key="own_use_year",
+        native_unit_of_measurement=PERCENTAGE,
+        suggested_display_precision=0,
+        value_fn=lambda c: y["own_use_pct"] if (y := _this_year(c)) else None,
+    ),
+    HomeEmsSensorDescription(
+        key="year_use_expected",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        suggested_display_precision=0,
+        value_fn=lambda c: y["total_kwh"] if (y := _this_year(c)) else None,
+        attrs_fn=lambda c: {k: y[k] for k in ("pv_kwh", "export_kwh", "import_kwh", "general_kwh",
+                                               "heat_pump_kwh", "ev_kwh", "gas_m3")}
+        if (y := _this_year(c)) else {},
+    ),
     HomeEmsSensorDescription(
         key="advice",
         device_class=SensorDeviceClass.ENUM,
@@ -162,7 +239,7 @@ async def async_setup_entry(
 
 
 class HomeEmsSensor(HomeEmsEntity, SensorEntity):
-    _unrecorded_attributes = frozenset({"runs"})
+    _unrecorded_attributes = frozenset({"runs", "months", "years"})
     entity_description: HomeEmsSensorDescription
 
     def __init__(

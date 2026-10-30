@@ -2,9 +2,14 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
+from pathlib import Path
 from typing import Any
 
+import yaml
+
+from homeassistant.components.recorder import get_instance
+from homeassistant.components.recorder.statistics import statistics_during_period
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
@@ -22,17 +27,34 @@ from .const import (
     DOMAIN,
     OPT_BASE_LOAD,
     OPT_COMFORT_SETPOINT,
+    OPT_COST_SETTINGS,
+    OPT_EXPORT_DIR,
     OPT_FLOOR_MIN_MARGIN,
     OPT_FLOOR_RULE_BAND,
     OPT_MAX_GAP,
     OPT_MIN_RUN,
+    OPT_OVERVIEW_FROM,
     OPT_PEAK_END,
     OPT_PEAK_START,
     OPT_PRICE_ENTITY,
     OPT_PV_RUN_THRESHOLD,
     OPT_SOLAR_ENTITY,
+    OPT_STAT_EV,
+    OPT_STAT_EXPORT,
+    OPT_STAT_EXPORT_REVENUE,
+    OPT_STAT_GAS,
+    OPT_STAT_HEAT_PUMP,
+    OPT_STAT_IMPORT,
+    OPT_STAT_IMPORT_COST,
+    OPT_STAT_OUTSIDE,
+    OPT_STAT_PV,
     OPT_WEATHER_ENTITY,
     OPTION_DEFAULTS,
+    OVERVIEW_BAD_SETTINGS,
+    OVERVIEW_NO_DATA,
+    OVERVIEW_NOT_CONFIGURED,
+    OVERVIEW_OK,
+    OVERVIEW_REFRESH,
     PLAN_NO_PRICES,
     PLAN_NO_TEMPERATURES,
     PLAN_OK,
@@ -41,9 +63,33 @@ from .const import (
     WEATHER_REFRESH,
 )
 from .model import Evaluation, Inputs, RunTracker, Settings, evaluate
+from .overview import Usage, YearSummary, build_overview, parse_settings, to_csv, years_csv
 from .planner import Plan, PlannerSettings, Slot, build_slots, hour_of, plan
 
 _LOGGER = logging.getLogger(__name__)
+
+# overview role -> option with the statistic ids
+STAT_ROLES = {
+    "import": OPT_STAT_IMPORT, "export": OPT_STAT_EXPORT, "pv": OPT_STAT_PV, "gas": OPT_STAT_GAS,
+    "hp": OPT_STAT_HEAT_PUMP, "ev": OPT_STAT_EV, "temp": OPT_STAT_OUTSIDE,
+    "import_cost": OPT_STAT_IMPORT_COST, "export_revenue": OPT_STAT_EXPORT_REVENUE,
+}
+
+
+def _row_day(start: float | datetime) -> date:
+    """Local day of a statistics row (start is a UTC timestamp, a datetime in older HA)."""
+    moment = start if isinstance(start, datetime) else dt_util.utc_from_timestamp(start)
+    return dt_util.as_local(moment).date()
+
+
+def _write_files(folder: str, files: dict[str, str]) -> None:
+    path = Path(folder)
+    if not path.is_dir():
+        _LOGGER.warning("Folder for the overview CSV files does not exist: %s", folder)
+        return
+    for name, text in files.items():
+        # utf-8 with BOM so Excel shows m³ and € correctly
+        (path / name).write_text(text, encoding="utf-8-sig")
 
 STORAGE_VERSION = 1
 SAVE_DELAY = 60  # seconds
@@ -72,6 +118,9 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self.plan_status = PLAN_NO_PRICES
         self._temps: dict[datetime, float] = {}   # hour start (UTC) -> forecast temperature
         self._temps_fetched: datetime | None = None
+        self.overview: list[YearSummary] = []
+        self.overview_status = OVERVIEW_NOT_CONFIGURED
+        self._overview_made: datetime | None = None
 
     # ------------------------------------------------------------ settings
 
@@ -149,6 +198,12 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self._store.async_delay_save(self.tracker.to_dict, SAVE_DELAY)
         if self.plan is None or now - self.plan.made >= REPLAN_INTERVAL:
             await self._async_replan(now)
+        if self._overview_made is None or now - self._overview_made >= OVERVIEW_REFRESH:
+            self._overview_made = now
+            try:
+                await self._async_refresh_overview(now)
+            except Exception:  # the overview must never stop the advice and the planner
+                _LOGGER.exception("Could not build the energy overview")
         return evaluation
 
     # ------------------------------------------------------------ planner
@@ -179,6 +234,74 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             if start is not None and item.get("temperature") is not None:
                 temps[hour_of(start)] = float(item["temperature"])
         self._temps, self._temps_fetched = temps, now
+
+    # ------------------------------------------------------------ overview
+
+    async def _async_refresh_overview(self, now: datetime) -> None:
+        options = self.config_entry.options
+        roles = {role: self._stat_ids(key) for role, key in STAT_ROLES.items()}
+        if not any(roles.values()):
+            self.overview, self.overview_status = [], OVERVIEW_NOT_CONFIGURED
+            return
+        try:
+            settings = parse_settings(yaml.safe_load(options.get(OPT_COST_SETTINGS) or "") or {})
+        except (yaml.YAMLError, ValueError) as err:
+            _LOGGER.warning("Invalid cost settings for the overview: %s", err)
+            self.overview, self.overview_status = [], OVERVIEW_BAD_SETTINGS
+            return
+        first = options.get(OPT_OVERVIEW_FROM)
+        start_day = date.fromisoformat(first) if first else date(now.year - 1, 1, 1)
+        start = dt_util.start_of_local_day(start_day)
+        days = await self._async_daily_usage(roles, start, now)
+        if not days:
+            self.overview, self.overview_status = [], OVERVIEW_NO_DATA
+            return
+        self.overview = build_overview(days, now.date(), settings, start_day.year)
+        self.overview_status = OVERVIEW_OK
+        folder = options.get(OPT_EXPORT_DIR)
+        if folder:
+            files = {f"energy_overzicht_{y.year}.csv": to_csv(y) for y in self.overview}
+            files["energy_overzicht_jaren.csv"] = years_csv(self.overview)
+            await self.hass.async_add_executor_job(_write_files, folder, files)
+
+    def _stat_ids(self, key: str) -> list[str]:
+        value = self.config_entry.options.get(key)
+        if not value:
+            return []
+        return [value] if isinstance(value, str) else list(value)
+
+    async def _async_daily_usage(self, roles: dict[str, list[str]], start: datetime,
+                                 end: datetime) -> dict[date, Usage]:
+        """Daily change of every statistic, summed per role into one Usage per local day."""
+        ids = {i for role, stat_ids in roles.items() if role != "temp" for i in stat_ids}
+        recorder = get_instance(self.hass)
+        changes = await recorder.async_add_executor_job(
+            statistics_during_period, self.hass, start, end, ids, "day",
+            {"energy": "kWh", "volume": "m³"}, {"change"}) if ids else {}
+        temps = await recorder.async_add_executor_job(
+            statistics_during_period, self.hass, start, end, set(roles["temp"]), "day",
+            {"temperature": "°C"}, {"mean"}) if roles["temp"] else {}
+        days: dict[date, dict[str, float]] = {}
+        for role, stat_ids in roles.items():
+            source, field = (temps, "mean") if role == "temp" else (changes, "change")
+            for stat_id in stat_ids:
+                for row in source.get(stat_id, []):
+                    value = row.get(field)
+                    if value is None:
+                        continue
+                    day = _row_day(row["start"])
+                    values = days.setdefault(day, {})
+                    values[role] = values.get(role, 0.0) + float(value)
+        out: dict[date, Usage] = {}
+        for day, v in days.items():
+            out[day] = Usage(
+                import_kwh=v.get("import", 0.0), export_kwh=v.get("export", 0.0),
+                pv_kwh=v.get("pv", 0.0), gas_m3=v.get("gas", 0.0), hp_kwh=v.get("hp", 0.0),
+                ev_kwh=v.get("ev", 0.0), import_cost=v.get("import_cost"),
+                export_revenue=v.get("export_revenue"),
+                temp_sum=v.get("temp", 0.0), temp_days=1 if "temp" in v else 0,
+            )
+        return out
 
     def build_slots(self) -> list[Slot]:
         """Quarter slots from the Jeroen.nl price list, with solar and temperature per hour."""
