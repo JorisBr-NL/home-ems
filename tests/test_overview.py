@@ -21,7 +21,7 @@ SETTINGS = ov.parse_settings({
         {"naam": "Tibber", "vanaf": "2027-01-16", "dynamisch": True, "stroom": 0.25,
          "teruglevering": 0.05, "gas": 1.25, "vast_per_dag": 2.6},
     ],
-    "voorschotten": [{"vanaf": "2025-01-01", "bedrag": 261}, {"vanaf": "2026-02-01", "bedrag": 123}],
+    "voorschotten": [{"vanaf": "2025-01-01", "bedrag": 261}, {"vanaf": "2026-01-01", "bedrag": 123}],
     "laadpaal_vergoeding": [{"vanaf": "2025-12-01", "tot": "2026-08-31", "per_kwh": 0.40}],
     "cashback": {2025: 400},
     "afrekening": {2025: 1854},
@@ -42,7 +42,7 @@ def test_parse_settings_and_lookups():
     assert s.contract(date(2026, 1, 13)).name == "vast 2025"
     assert s.contract(date(2026, 1, 14)).name == "vast 2026"
     assert s.contract(date(2024, 12, 31)) is None
-    assert s.advance(date(2026, 1, 1)) == 261 and s.advance(date(2026, 2, 1)) == 123
+    assert s.advance(date(2025, 12, 1)) == 261 and s.advance(date(2026, 1, 1)) == 123
     assert s.ev_refund(date(2026, 8, 31)) == 0.40 and s.ev_refund(date(2026, 9, 1)) == 0.0
     with pytest.raises(ValueError):
         ov.parse_settings({"contracten": [{"stroom": 1}]})
@@ -113,11 +113,18 @@ def test_build_overview_actual_running_and_forecast_months():
     years = ov.build_overview(days, today, SETTINGS)
     assert [y.year for y in years] == [2025, 2026]
     y25, y26 = years
-    assert y25.complete and len(y25.rows) == 12
+    # settlement years follow the contracts: 1 Jan 2025 - 13 Jan 2026 and 14 Jan 2026 - 15 Jan 2027
+    assert (y25.start, y25.end) == (date(2025, 1, 1), date(2026, 1, 13))
+    assert (y26.start, y26.end) == (date(2026, 1, 14), date(2027, 1, 15))
+    assert y25.complete and len(y25.rows) == 13 and y25.rows[-1].as_dict()["days"] == "1-13"
     statuses = [r.status for r in y26.rows]
-    assert statuses[:9] == ["actual"] * 9 and statuses[9] == "running" and statuses[10:] == ["forecast"] * 2
+    assert statuses[:9] == ["actual"] * 9 and statuses[9] == "running" and statuses[10:] == ["forecast"] * 3
+    assert y26.rows[0].as_dict()["days"] == "14-31" and y26.rows[-1].as_dict()["days"] == "1-15"
+    # January 2026 is split, but its advance is counted once (in the row with its last day)
+    assert y25.rows[-1].advance == 0 and y26.rows[0].advance == 123
     # running month: 29 actual days plus 2 forecast days
     oct_row = y26.rows[9]
+    assert oct_row.month == date(2026, 10, 1)
     assert oct_row.usage.temp_days == 31
     d = y25.as_dict()
     assert d["cashback"] == 400 and d["settlement"] == 1854
@@ -147,4 +154,57 @@ def test_csv_uses_semicolon_and_decimal_comma():
     first = text.splitlines()[1].split(";")
     assert first[0] == "2026-01" and "," in first[head.index("Totaal")]
     assert "Totale kosten" in text
-    assert ov.years_csv(years).splitlines()[1].startswith("2025;ja;")
+    assert ov.years_csv(years).splitlines()[1].startswith("2025;2025-01-01;2026-01-13;vast 2025;ja;")
+
+
+def test_clean_daily_drops_glitches_and_negative_days():
+    values = {date(2026, 4, d): 15.0 for d in range(1, 29)}
+    values[date(2026, 4, 10)] = 65535.0   # inverter reported a wrong total for a moment
+    values[date(2026, 4, 11)] = -3.0      # meter went back
+    clean, dropped = ov.clean_daily(values)
+    assert [d for d, _ in dropped] == [date(2026, 4, 10), date(2026, 4, 11)]
+    assert len(clean) == 26 and max(clean.values()) == 15.0
+    # a busy day well within the limit stays (EV charging)
+    values = {date(2026, 4, d): 10.0 for d in range(1, 29)} | {date(2026, 4, 5): 75.0}
+    assert ov.clean_daily(values)[1] == []
+
+
+def test_manual_months_replace_statistics_and_feed_the_forecast():
+    s = ov.parse_settings({
+        "contracten": [{"vanaf": "2025-01-01", "stroom": 0.283, "gas": 1.291, "vast_per_dag": 3.538}],
+        "handmatig": {"2025-02": {"gas": 155, "opwek": 234, "teruglevering": 192, "afname": 605,
+                                  "warmtepomp": 300, "laadpaal": 0, "temp": 3.5}},
+    })
+    feb = s.manual[(date(2025, 2, 1), date(2025, 2, 28))]
+    assert feb.import_kwh == 605 and feb.mean_temp == pytest.approx(3.5)
+    stats = flat_days(date(2025, 2, 1), date(2025, 2, 28), import_kwh=999)
+    days = ov.apply_manual(stats, s.manual)
+    month = ov.by_month(days)[date(2025, 2, 1)]
+    assert month.import_kwh == pytest.approx(605) and month.hp_kwh == pytest.approx(300)
+    assert month.mean_temp == pytest.approx(3.5) and month.temp_days == 28
+    row = ov.build_overview(days, date(2025, 3, 1), s)[0].as_dict()["months"][0]
+    assert row["gas_cost"] == pytest.approx(155 * 1.291, abs=0.01)
+    assert row["power_cost"] == pytest.approx((605 - 192) * 0.283, abs=0.01)
+
+
+def test_settlement_years_follow_contracts_and_anniversaries():
+    s = ov.parse_settings({"contracten": [
+        {"vanaf": "2025-01-01"}, {"vanaf": "2026-01-14"}, {"vanaf": "2027-01-16", "naam": "Tibber"}]})
+    years = ov.settlement_years(s, date(2028, 3, 1))
+    assert years[0][:2] == (date(2025, 1, 1), date(2026, 1, 13))      # 13 days longer: no stub year
+    assert years[1][:2] == (date(2026, 1, 14), date(2027, 1, 15))
+    assert years[2] == (date(2027, 1, 16), date(2028, 1, 15), "Tibber")
+    assert years[3][:2] == (date(2028, 1, 16), date(2029, 1, 15))
+    assert len(years) == 4
+
+
+def test_manual_period_inside_a_month():
+    s = ov.parse_settings({"handmatig": {"2026-01-01/2026-01-13": {"afname": 871, "temp": 0.1},
+                                         "2026-01-14/2026-01-31": {"afname": 867, "temp": 3.0}}})
+    days = ov.apply_manual({}, s.manual)
+    assert days[date(2026, 1, 13)].import_kwh == pytest.approx(871 / 13)
+    assert days[date(2026, 1, 14)].import_kwh == pytest.approx(867 / 18)
+    jan = ov.by_month(days)[date(2026, 1, 1)]
+    assert jan.import_kwh == pytest.approx(1738) and jan.temp_days == 31
+    with pytest.raises(ValueError):
+        ov.parse_settings({"handmatig": {"2026-01-13/2026-01-01": {}}})
