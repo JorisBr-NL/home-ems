@@ -126,6 +126,19 @@ def test_build_overview_actual_running_and_forecast_months():
     assert d["expected_settlement"] == pytest.approx(d["costs"] - d["advances"], abs=0.01)
 
 
+def test_net_export_surplus_of_a_year_earns_the_export_price():
+    s = ov.parse_settings({"contracten": [{"vanaf": "2026-01-01", "stroom": 0.2285,
+                                           "teruglevering": 0.15}]})
+    # 2026: every day 1 kWh import and 2 kWh export -> 365 kWh net surplus
+    days = flat_days(date(2026, 1, 1), date(2026, 12, 31), import_kwh=1, export_kwh=2)
+    year = ov.build_overview(days, date(2027, 1, 1), s)[0]
+    assert year.as_dict()["costs"] == pytest.approx(-365 * 0.15, abs=0.05)
+    # with net import nothing changes
+    days = flat_days(date(2026, 1, 1), date(2026, 12, 31), import_kwh=2, export_kwh=1)
+    year = ov.build_overview(days, date(2027, 1, 1), s)[0]
+    assert year.as_dict()["costs"] == pytest.approx(365 * 0.2285, abs=0.05)
+
+
 def test_csv_uses_semicolon_and_decimal_comma():
     years = ov.build_overview(_history(), date(2026, 10, 30), SETTINGS)
     text = ov.to_csv(years[-1])

@@ -179,7 +179,7 @@ Vervangt een zelf bijgehouden Excel-overzicht. Home EMS leest elk uur de langete
 - **kosten:** vaste kosten, gas, stroom, laadpaalvergoeding, totaal, voorschot, cumulatief totaal en voorschot, cashback, verwachte eindafrekening;
 - **voorspelling** voor de rest van het jaar: de lopende maand is werkelijk tot vandaag plus de voorspelling voor de resterende dagen. Opwek volgt een NL-profiel per maand, geschaald op de eigen opbrengst. Warmtepomp en gas komen uit een regressie op graaddagen sinds de warmtepomp er is, met normaaltemperaturen De Bilt 1991–2020. Algemeen verbruik is de zelfde maand eerder, met de trend van de laatste maanden. Laadpaal: gemiddelde van de laatste 3 maanden.
 
-Stroomkosten: tot en met `saldering_tot` per dag (afname − teruglevering) × tarief (mag negatief); daarna afname × inkoopprijs − teruglevering × terugleverprijs. Bij een dynamisch contract tellen de werkelijke kostenstatistieken (bijvoorbeeld van de Tibber-integratie), en de prijzen in de YAML zijn dan alleen de verwachting voor de voorspelling.
+Stroomkosten: tot en met `saldering_tot` per dag (afname − teruglevering) × tarief (mag negatief); levert een jaar netto meer terug dan het afneemt, dan krijgt dat overschot alleen de `teruglevering`-prijs (correctie in de laatste salderingsmaand van dat jaar). Daarna afname × inkoopprijs − teruglevering × terugleverprijs. Bij een dynamisch contract tellen de werkelijke kostenstatistieken (bijvoorbeeld van de Tibber-integratie), en de prijzen in de YAML zijn dan alleen de verwachting voor de voorspelling.
 
 | Entiteit | Betekenis |
 |---|---|
@@ -202,16 +202,17 @@ De entity-id's volgen de taal van HA bij het aanmaken (in het Nederlands bijvoor
 contracten:
   - naam: Vast 2026
     vanaf: 2026-01-14
-    stroom: 0.2285
-    gas: 1.21
-    vast_per_dag: 2.58
+    stroom: 0.228
+    teruglevering: 0.15   # per kWh netto-overschot onder saldering, en per kWh na saldering
+    gas: 1.205
+    vast_per_dag: 2.593   # incl. terugleverkosten, netbeheer en vermindering energiebelasting
   - naam: Tibber
     vanaf: 2027-01-16
     dynamisch: true
     stroom: 0.25          # verwachte gemiddelde inkoopprijs (alleen voor de voorspelling)
-    teruglevering: 0.06   # verwachte gemiddelde terugleverprijs
-    gas: 1.25
-    vast_per_dag: 2.60
+    teruglevering: 0.05   # verwachte gemiddelde terugleverprijs
+    gas: 1.24
+    vast_per_dag: 0.67
 saldering_tot: 2026-12-31
 voorschotten:
   - vanaf: 2026-01-14

@@ -378,6 +378,24 @@ class YearSummary:
         }
 
 
+def _net_metering_surplus(year: int, rows: list[MonthRow], s: CostSettings) -> list[MonthRow]:
+    """Net metering pays the purchase price only up to the import of the year; a net
+    export surplus earns the (lower) export price. The monthly rows credit every
+    exported kWh at the purchase price, so correct the last net-metering month."""
+    metered = [r for r in rows if r.month <= s.net_metering_until]
+    if not metered:
+        return rows
+    surplus = sum(r.usage.export_kwh - r.usage.import_kwh for r in metered)
+    last = metered[-1]
+    last_day = min(s.net_metering_until, date(year, last.month.month, month_days(last.month)))
+    contract = s.contract(last_day)
+    if surplus <= 0 or contract is None:
+        return rows
+    fix = surplus * (contract.import_price - contract.export_price)
+    fixed = replace(last, costs=last.costs + Costs(power=fix))
+    return [fixed if r is last else r for r in rows]
+
+
 def build_overview(days: dict[date, Usage], today: date, s: CostSettings,
                    first_year: int | None = None) -> list[YearSummary]:
     """Years from the first day with data (or `first_year`) up to the current year.
@@ -414,6 +432,7 @@ def build_overview(days: dict[date, Usage], today: date, s: CostSettings,
                 for d in future_days:
                     usage, costs = usage + per_day, costs + day_costs(d, per_day, s)
             rows.append(MonthRow(m, status, usage, costs, s.advance(m)))
+        rows = _net_metering_surplus(year, rows, s)
         if rows:
             years.append(YearSummary(year, tuple(rows), s.cashback.get(year, 0.0),
                                      s.settlements.get(year)))
