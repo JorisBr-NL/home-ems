@@ -163,7 +163,8 @@ def test_clean_daily_drops_glitches_and_negative_days():
     values[date(2026, 4, 11)] = -3.0      # meter went back
     clean, dropped = ov.clean_daily(values)
     assert [d for d, _ in dropped] == [date(2026, 4, 10), date(2026, 4, 11)]
-    assert len(clean) == 26 and max(clean.values()) == 15.0
+    # glitch days are repaired with the days around them, so the month total stays right
+    assert len(clean) == 28 and clean[date(2026, 4, 10)] == 15.0 and clean[date(2026, 4, 11)] == 15.0
     # a busy day well within the limit stays (EV charging)
     values = {date(2026, 4, d): 10.0 for d in range(1, 29)} | {date(2026, 4, 5): 75.0}
     assert ov.clean_daily(values)[1] == []
@@ -208,3 +209,61 @@ def test_manual_period_inside_a_month():
     assert jan.import_kwh == pytest.approx(1738) and jan.temp_days == 31
     with pytest.raises(ValueError):
         ov.parse_settings({"handmatig": {"2026-01-13/2026-01-01": {}}})
+
+
+def test_forecast_learns_only_from_the_last_twelve_months():
+    # gas use for hot water halved a year ago: the forecast must follow the new level
+    days = {}
+    d = date(2024, 1, 1)
+    while d < date(2026, 11, 1):
+        temp = ov.NORMAL_TEMP[d.month - 1]
+        gas = 1.4 if d < date(2025, 10, 1) else 0.7
+        days[d] = ov.Usage(gas_m3=gas, hp_kwh=0.8 * max(0, 18 - temp), temp_sum=temp, temp_days=1)
+        d += timedelta(days=1)
+    f = ov.Forecaster.learn(ov.by_month(days))
+    assert f.predict(date(2026, 11, 1)).gas_m3 == pytest.approx(0.7 * 30, rel=0.05)
+
+
+def test_forecast_uses_own_solar_month_and_last_wallbox_month():
+    months = {
+        date(2025, 1, 1): ov.Usage(pv_kwh=47, ev_kwh=0),
+        date(2026, 1, 1): ov.Usage(pv_kwh=139, ev_kwh=318),
+        date(2026, 8, 1): ov.Usage(pv_kwh=933, ev_kwh=280),
+        date(2026, 9, 1): ov.Usage(pv_kwh=659, ev_kwh=30),
+    }
+    f = ov.Forecaster.learn(months)
+    jan = f.predict(date(2027, 1, 1))
+    assert jan.pv_kwh == pytest.approx((47 + 139) / 2)
+    assert jan.ev_kwh == 30
+
+
+def test_learn_from_date_uses_a_plain_mean_until_enough_months():
+    s = ov.parse_settings({"leren_vanaf": {"gas": "2026-08-01"}})
+    assert s.learn_from == {"gas": date(2026, 8, 1)}
+    days = {}
+    d = date(2025, 3, 1)
+    while d < date(2026, 11, 1):
+        temp = ov.NORMAL_TEMP[d.month - 1]
+        gas = 0.7 if d >= date(2026, 8, 1) else 1.5   # guests and holidays before August
+        days[d] = ov.Usage(gas_m3=gas, hp_kwh=0.8 * max(0, 18 - temp), temp_sum=temp, temp_days=1)
+        d += timedelta(days=1)
+    f = ov.Forecaster.learn(ov.by_month(days), s.learn_from)
+    assert f.gas_fit is None and f.hp_fit is not None
+    assert f.predict(date(2026, 12, 1)).gas_m3 == pytest.approx(0.7 * 31)
+    with pytest.raises(ValueError):
+        ov.parse_settings({"leren_vanaf": {"water": "2026-08-01"}})
+
+
+def test_wallbox_refund_is_outside_the_costs_and_discount_lowers_fixed_costs():
+    s = ov.parse_settings({
+        "contracten": [{"vanaf": "2027-01-16", "dynamisch": True, "vast_per_dag": 0.67,
+                        "korting_per_maand": 15}],
+        "laadpaal_vergoeding": [{"vanaf": "2027-01-01", "tot": "2027-03-31", "per_kwh": 0.40}],
+    })
+    c = ov.day_costs(date(2027, 2, 1), ov.Usage(ev_kwh=10), s)
+    assert c.ev_refund == pytest.approx(-4.0)
+    assert c.total == pytest.approx(0.67 - 15 * 12 / 365)   # refund not in the total
+    days = flat_days(date(2027, 1, 16), date(2027, 3, 31), ev_kwh=10)
+    y = ov.build_overview(days, date(2027, 4, 1), s)[0].as_dict()
+    assert y["ev_refund"] == pytest.approx(-4.0 * 75, abs=0.01)
+    assert y["costs"] == pytest.approx(sum(m["total"] for m in y["months"]), abs=0.05)

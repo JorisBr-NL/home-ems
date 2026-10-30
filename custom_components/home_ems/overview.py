@@ -18,6 +18,11 @@ NORMAL_TEMP = (3.6, 3.9, 6.5, 9.8, 13.4, 16.2, 18.3, 17.9, 14.7, 10.9, 7.0, 4.2)
 NORMAL_PV = (0.025, 0.043, 0.079, 0.115, 0.135, 0.135, 0.135, 0.121, 0.090, 0.060, 0.027, 0.017)
 HDD_BASE = 18.0        # base temperature for heating degree days
 HP_MIN_MONTH = 50.0    # kWh: months with at least this much heat pump use mark the start of the heat pump
+LEARN_MONTHS = 12      # the forecast learns from the most recent complete months (habits change)
+NEIGHBOURS = 3         # days on either side used to repair a glitch day
+MIN_FIT_MONTHS = 6     # fewer months: no degree-day regression, a plain mean per day instead
+# YAML keys of `leren_vanaf` -> forecast quantity
+LEARN_KEYS = {"gas": "gas", "warmtepomp": "hp", "algemeen": "general", "opwek": "pv"}
 
 
 @dataclass
@@ -80,6 +85,7 @@ class Contract:
     gas_price: float = 0.0         # EUR/m3 all-in
     fixed_per_day: float = 0.0     # supplier + grid operator - energy tax reduction, per day
     dynamic: bool = False          # prices above are then only expectations for the forecast
+    monthly_discount: float = 0.0  # EUR per month off the bill (e.g. a welcome discount)
 
 
 @dataclass(frozen=True)
@@ -101,6 +107,7 @@ class CostSettings:
     cashback: dict[int, float] = field(default_factory=dict)
     settlements: dict[int, float] = field(default_factory=dict)   # actual final bill per year
     manual: dict[tuple[date, date], Usage] = field(default_factory=dict)  # periods entered by hand
+    learn_from: dict[str, date] = field(default_factory=dict)  # per forecast quantity: first month to learn from
 
     def contract(self, day: date) -> Contract | None:
         current = None
@@ -158,6 +165,7 @@ def parse_settings(raw: dict | None) -> CostSettings:
                 start=_date(c["vanaf"]), name=str(c.get("naam", "")),
                 import_price=float(c.get("stroom", 0)), export_price=float(c.get("teruglevering", 0)),
                 gas_price=float(c.get("gas", 0)), fixed_per_day=float(c.get("vast_per_dag", 0)),
+                monthly_discount=float(c.get("korting_per_maand", 0)),
                 dynamic=bool(c.get("dynamisch", False)),
             ) for c in raw.get("contracten") or []), key=lambda c: c.start))
         advances = tuple(Period(_date(a["vanaf"]), None, float(a["bedrag"]))
@@ -173,6 +181,7 @@ def parse_settings(raw: dict | None) -> CostSettings:
             settlements={int(k): float(v) for k, v in (raw.get("afrekening") or {}).items()},
             manual={(span := _period_key(k)): _manual_usage(span, v)
                     for k, v in (raw.get("handmatig") or {}).items()},
+            learn_from={LEARN_KEYS[k]: _date(v) for k, v in (raw.get("leren_vanaf") or {}).items()},
         )
     except (KeyError, TypeError, ValueError) as err:
         raise ValueError(str(err)) from err
@@ -183,19 +192,26 @@ def parse_settings(raw: dict | None) -> CostSettings:
 
 def clean_daily(values: dict[date, float], floor: float = 100.0,
                 factor: float = 8.0) -> tuple[dict[date, float], list[tuple[date, float]]]:
-    """Drop glitches from the daily change of one statistic: negative days (a meter
+    """Repair glitches in the daily change of one statistic: negative days (a meter
     that went back) and days far above the normal level (a sensor that briefly
     reported a wrong total). The limit is `factor` times the median of the positive
-    days, but never below `floor`."""
+    days, but never below `floor`. Such a day gets the mean of the good days up to
+    `NEIGHBOURS` days before and after it (the real use or yield of that day is lost
+    in the glitch), or the median if there are none; the glitches are returned too."""
     positive = sorted(v for v in values.values() if v > 0)
     median = positive[len(positive) // 2] if positive else 0.0
     limit = max(floor, factor * median)
-    clean, dropped = {}, []
+    clean: dict[date, float] = {}
+    dropped = []
     for day, value in values.items():
         if value < -0.01 or value > limit:
             dropped.append((day, value))
         else:
             clean[day] = max(0.0, value)
+    for day, _ in dropped:
+        near = [clean[d] for i in range(1, NEIGHBOURS + 1)
+                for d in (day - timedelta(days=i), day + timedelta(days=i)) if d in clean]
+        clean[day] = sum(near) / len(near) if near else median
     return clean, sorted(dropped)
 
 
@@ -223,11 +239,12 @@ class Costs:
     fixed: float = 0.0
     gas: float = 0.0
     power: float = 0.0
-    ev_refund: float = 0.0     # negative: money back
+    ev_refund: float = 0.0     # negative: money back, paid apart by the charge point operator
 
     @property
     def total(self) -> float:
-        return self.fixed + self.gas + self.power + self.ev_refund
+        """Energy costs on the supplier's bill; the wallbox refund is not part of it."""
+        return self.fixed + self.gas + self.power
 
     def __add__(self, other: Costs) -> Costs:
         return Costs(self.fixed + other.fixed, self.gas + other.gas,
@@ -244,7 +261,8 @@ def day_costs(day: date, u: Usage, s: CostSettings) -> Costs:
         power = u.import_cost - (u.export_revenue or 0.0)
     else:
         power = u.import_kwh * c.import_price - u.export_kwh * c.export_price
-    return Costs(c.fixed_per_day, u.gas_m3 * c.gas_price, power, -u.ev_kwh * s.ev_refund(day))
+    fixed = c.fixed_per_day - c.monthly_discount * 12 / 365
+    return Costs(fixed, u.gas_m3 * c.gas_price, power, -u.ev_kwh * s.ev_refund(day))
 
 
 # ---------------------------------------------------------------- forecast
@@ -293,27 +311,46 @@ class Forecaster:
     hp_fit: tuple[float, float] | None        # kWh per day = a + b * HDD per day
     gas_fit: tuple[float, float] | None       # m3 per day = a + b * HDD per day
     pv_year: float | None                     # learned yearly solar yield
+    learn_from: dict[str, date] = field(default_factory=dict)
 
     @classmethod
-    def learn(cls, months: dict[date, Usage]) -> Forecaster:
+    def learn(cls, months: dict[date, Usage], learn_from: dict[str, date] | None = None) -> Forecaster:
+        learn_from = learn_from or {}
         hp_start = min((m for m, u in months.items() if u.hp_kwh >= HP_MIN_MONTH), default=None)
-        hp_pts, gas_pts = [], []
-        for m, u in months.items():
-            if hp_start is None or m < hp_start or u.mean_temp is None:
-                continue
-            hdd = max(0.0, HDD_BASE - u.mean_temp)
-            n = month_days(m)
-            hp_pts.append((hdd, u.hp_kwh / n))
-            gas_pts.append((hdd, u.gas_m3 / n))
-        shares = sum(NORMAL_PV)
-        pv = [(u.pv_kwh, NORMAL_PV[m.month - 1] / shares) for m, u in months.items() if u.pv_kwh > 0]
-        pv_year = sum(k for k, _ in pv) / sum(s for _, s in pv) if pv else None
-        return cls(months, _fit(hp_pts), _fit(gas_pts), pv_year)
+        usable = sorted(m for m, u in months.items()
+                        if hp_start is not None and m >= hp_start and u.mean_temp is not None)
+        recent = usable[-LEARN_MONTHS:]
 
-    def _same_month(self, m: date, attr: str) -> float | None:
-        values = [getattr(u, attr) if attr != "general_kwh" else u.general_kwh
-                  for k, u in self.months.items() if k.month == m.month and k < m]
+        def fit(key: str, attr: str) -> tuple[float, float] | None:
+            first = learn_from.get(key, date.min)
+            pts = [(max(0.0, HDD_BASE - months[m].mean_temp), getattr(months[m], attr) / month_days(m))
+                   for m in recent if m >= first]
+            return _fit(pts) if len(pts) >= MIN_FIT_MONTHS else None
+
+        pv_first = learn_from.get("pv", date.min)
+        shares = sum(NORMAL_PV)
+        pv = [(u.pv_kwh, NORMAL_PV[m.month - 1] / shares) for m, u in months.items()
+              if u.pv_kwh > 0 and m >= pv_first]
+        pv_year = sum(k for k, _ in pv) / sum(s for _, s in pv) if pv else None
+        return cls(months, fit("hp", "hp_kwh"), fit("gas", "gas_m3"), pv_year, learn_from)
+
+    @staticmethod
+    def _value(u: Usage, attr: str) -> float:
+        return u.general_kwh if attr == "general_kwh" else getattr(u, attr)
+
+    def _since(self, key: str | None) -> dict[date, Usage]:
+        first = self.learn_from.get(key, date.min) if key else date.min
+        return {k: u for k, u in self.months.items() if k >= first}
+
+    def _same_month(self, m: date, attr: str, key: str | None = None) -> float | None:
+        values = [self._value(u, attr) for k, u in self._since(key).items() if k.month == m.month and k < m]
         return sum(values) / len(values) if values else None
+
+    def _mean_per_day(self, m: date, attr: str, key: str) -> float | None:
+        """Mean per day over the months since `leren_vanaf` (no seasonal effect yet)."""
+        since = {k: u for k, u in self._since(key).items() if k < m}
+        days = sum(month_days(k) for k in since)
+        return sum(self._value(u, attr) for u in since.values()) / days if days else None
 
     def _recent(self, m: date, attr: str, n: int = 3) -> list[float]:
         keys = sorted(k for k in self.months if k < m)[-n:]
@@ -335,28 +372,43 @@ class Forecaster:
         temp = NORMAL_TEMP[m.month - 1]
         hdd = max(0.0, HDD_BASE - temp)
 
-        def regress(fit, attr):
+        def regress(fit, attr, key):
             if fit is not None:
                 return max(0.0, (fit[0] + fit[1] * hdd) * n)
-            return self._same_month(m, attr) or 0.0
+            if key in self.learn_from:
+                per_day = self._mean_per_day(m, attr, key)
+                if per_day is not None:
+                    return per_day * n
+            return self._same_month(m, attr, key) or 0.0
 
-        hp = regress(self.hp_fit, "hp_kwh")
-        gas = regress(self.gas_fit, "gas_m3")
-        pv = (self.pv_year * NORMAL_PV[m.month - 1] / sum(NORMAL_PV)) if self.pv_year else 0.0
-        general = self._same_month(m, "general_kwh")
+        hp = regress(self.hp_fit, "hp_kwh", "hp")
+        gas = regress(self.gas_fit, "gas_m3", "gas")
+        # solar: the own yield of this month in earlier years (orientation and shade
+        # differ per roof), else the Dutch profile scaled to the own yearly yield
+        pv = self._same_month(m, "pv_kwh", "pv")
+        if pv is None:
+            pv = (self.pv_year * NORMAL_PV[m.month - 1] / sum(NORMAL_PV)) if self.pv_year else 0.0
+        general = self._same_month(m, "general_kwh", "general")
         if general is None:
-            recent = self._recent(m, "general_kwh", 12)
-            general = sum(recent) / len(recent) if recent else 0.0
-        else:
+            per_day = self._mean_per_day(m, "general_kwh", "general") if "general" in self.learn_from else None
+            if per_day is not None:
+                general = per_day * n
+            else:
+                recent = self._recent(m, "general_kwh", 12)
+                general = sum(recent) / len(recent) if recent else 0.0
+        elif "general" not in self.learn_from:
             general *= self._trend(m)
-        recent_ev = self._recent(m, "ev_kwh")
-        ev = sum(recent_ev) / len(recent_ev) if recent_ev else 0.0
+        # wallbox: the last complete month (a car comes or goes at once)
+        recent_ev = self._recent(m, "ev_kwh", 1)
+        ev = recent_ev[0] if recent_ev else 0.0
         total = general + hp + ev
         # share of the solar yield used in the house, from the same month earlier
-        shares = [(u.pv_kwh - u.export_kwh) / u.pv_kwh for k, u in self.months.items()
-                  if k.month == m.month and u.pv_kwh > 0]
+        def share(u: Usage) -> float:   # clipped: the meters do not always agree
+            return min(1.0, max(0.0, (u.pv_kwh - u.export_kwh) / u.pv_kwh))
+
+        shares = [share(u) for k, u in self.months.items() if k.month == m.month and u.pv_kwh > 0]
         if not shares:
-            shares = [(u.pv_kwh - u.export_kwh) / u.pv_kwh for u in self.months.values() if u.pv_kwh > 0]
+            shares = [share(u) for u in self.months.values() if u.pv_kwh > 0]
         own = min(pv, total, pv * (sum(shares) / len(shares) if shares else 0.3))
         return Usage(import_kwh=total - own, export_kwh=pv - own, pv_kwh=pv, gas_m3=gas,
                      hp_kwh=hp, ev_kwh=ev, temp_sum=temp * n, temp_days=n)
@@ -453,6 +505,8 @@ class YearSummary:
             "heat_pump_kwh": round(u.hp_kwh), "ev_kwh": round(u.ev_kwh),
             "own_use_pct": round(own) if own is not None else None,
             "advances": round(self.advances, 2), "cashback": round(self.cashback, 2),
+            # paid apart by the charge point operator, not part of costs or settlement
+            "ev_refund": round(sum(r.costs.ev_refund for r in self.rows), 2),
             "costs": round(self.costs, 2),
             # positive: pay extra at the final bill; negative: money back
             "expected_settlement": round(self.costs - self.advances, 2),
@@ -506,7 +560,7 @@ def build_overview(days: dict[date, Usage], today: date, s: CostSettings) -> lis
     far plus the forecast for its remaining days. A month's advance payment is booked
     on its last day, so a month split by a contract change counts it once."""
     current = month_start(today)
-    forecaster = Forecaster.learn(by_month({d: u for d, u in days.items() if d < current}))
+    forecaster = Forecaster.learn(by_month({d: u for d, u in days.items() if d < current}), s.learn_from)
     years = []
     for start, end, name in settlement_years(s, today):
         rows = []
@@ -563,6 +617,7 @@ def to_csv(summary: YearSummary) -> str:
     lines.append("")
     for label, key in (("Eigen verbruik %", "own_use_pct"), ("Voorschotten", "advances"),
                        ("Cashback", "cashback"), ("Totale kosten", "costs"),
+                       ("Retour laadpaal (apart uitbetaald)", "ev_refund"),
                        ("Verwachte afrekening (+ bijbetalen)", "expected_settlement"),
                        ("Volgens afrekening", "settlement")):
         lines.append(f"{label};{cell(data.get(key))}")
@@ -571,10 +626,10 @@ def to_csv(summary: YearSummary) -> str:
 
 def years_csv(years: list[YearSummary]) -> str:
     head = ("Jaar;Van;Tot;Contract;Compleet;Gas m3;Opwek kWh;Teruglevering kWh;Afname kWh;Verbruik totaal kWh;"
-            "Algemeen kWh;Warmtepomp kWh;Laadpaal kWh;Eigen verbruik %;Voorschotten;Cashback;"
+            "Algemeen kWh;Warmtepomp kWh;Laadpaal kWh;Eigen verbruik %;Voorschotten;Cashback;Retour laadpaal;"
             "Totale kosten;Verwachte afrekening;Volgens afrekening")
     keys = ("year", "from", "to", "contract", "complete", "gas_m3", "pv_kwh", "export_kwh", "import_kwh", "total_kwh",
-            "general_kwh", "heat_pump_kwh", "ev_kwh", "own_use_pct", "advances", "cashback",
+            "general_kwh", "heat_pump_kwh", "ev_kwh", "own_use_pct", "advances", "cashback", "ev_refund",
             "costs", "expected_settlement", "settlement")
     out = [head]
     for y in years:

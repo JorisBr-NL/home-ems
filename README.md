@@ -6,7 +6,7 @@ Eigen energiemanagementsysteem voor Home Assistant: stuurt (straks) de Quatt-war
 
 Het ontwerp staat in Obsidian (`Projects/Energie/EMS ontwerp.md`); de analyse waarop de standaardwaarden zijn gebaseerd in `Projects/Energie/Analyse runs en flowmeter.md`.
 
-## Status: versie 0.4.1 – observatiemodus
+## Status: versie 0.4.2 – observatiemodus
 
 Home EMS leest sensoren uit en laat zien wat het **zou** doen. Het schrijft niets naar apparaten; je bestaande automatiseringen blijven leidend.
 
@@ -177,7 +177,7 @@ Vervangt een zelf bijgehouden Excel-overzicht. Home EMS leest elk uur de langete
 
 - **meten:** gas, opwek, teruglevering, afname, afname − teruglevering, verbruik totaal / algemeen / warmtepomp / laadpaal, eigen verbruik % (= (opwek − teruglevering) / opwek), gemiddelde buitentemperatuur;
 - **kosten:** vaste kosten, gas, stroom, laadpaalvergoeding, totaal, voorschot, cumulatief totaal en voorschot, cashback, verwachte eindafrekening;
-- **voorspelling** voor de rest van het jaar: de lopende maand is werkelijk tot vandaag plus de voorspelling voor de resterende dagen. Opwek volgt een NL-profiel per maand, geschaald op de eigen opbrengst. Warmtepomp en gas komen uit een regressie op graaddagen sinds de warmtepomp er is, met normaaltemperaturen De Bilt 1991–2020. Algemeen verbruik is de zelfde maand eerder, met de trend van de laatste maanden. Laadpaal: gemiddelde van de laatste 3 maanden.
+- **voorspelling** voor de rest van het jaar: de lopende maand is werkelijk tot vandaag plus de voorspelling voor de resterende dagen. Opwek is de eigen opbrengst van die maand in eerdere jaren (anders een NL-profiel, geschaald op de eigen jaaropbrengst). Warmtepomp en gas komen uit een regressie op graaddagen over de laatste 12 volle maanden (sinds de warmtepomp er is), met normaaltemperaturen De Bilt 1991–2020. Algemeen verbruik is dezelfde maand eerder, met de trend van de laatste maanden. Laadpaal: de laatste volle maand. Met `leren_vanaf` (gas, warmtepomp, algemeen, opwek) leert de voorspelling pas vanaf een bepaalde maand; zijn dat er nog minder dan 6, dan geldt het gemiddelde per dag over die maanden.
 
 Stroomkosten: tot en met `saldering_tot` per dag (afname − teruglevering) × tarief (mag negatief); levert een jaar netto meer terug dan het afneemt, dan krijgt dat overschot alleen de `teruglevering`-prijs (correctie in de laatste salderingsmaand van dat jaar). Daarna afname × inkoopprijs − teruglevering × terugleverprijs. Bij een dynamisch contract tellen de werkelijke kostenstatistieken (bijvoorbeeld van de Tibber-integratie), en de prijzen in de YAML zijn dan alleen de verwachting voor de voorspelling.
 
@@ -192,7 +192,7 @@ Stroomkosten: tot en met `saldering_tot` per dag (afname − teruglevering) × t
 
 De entity-id's volgen de taal van HA bij het aanmaken (in het Nederlands bijvoorbeeld `sensor.home_ems_verwachte_energiekosten_dit_jaar`).
 
-**Uitschieters:** een statistiek die even een onzinwaarde meldt (bijvoorbeeld een omvormer met een verkeerde dagtotaal), levert een dag met een enorme sprong op. Home EMS laat dagen weg die negatief zijn of boven 8 × de mediaan van die statistiek liggen (minimaal 100 per dag), en toont ze in de attributen `skipped_days` van *Status overzicht*, zodat je ze in HA kunt corrigeren (Ontwikkelaarshulpmiddelen → Statistieken).
+**Uitschieters:** een statistiek die even een onzinwaarde meldt (bijvoorbeeld een omvormer met een verkeerde dagtotaal), levert een dag met een enorme sprong op. Home EMS vervangt dagen die negatief zijn of boven 8 × de mediaan van die statistiek liggen (minimaal 100 per dag) door het gemiddelde van de dagen eromheen (3 dagen ervoor en erna), en toont ze in de attributen `skipped_days` van *Status overzicht*, zodat je ze in HA kunt corrigeren (Ontwikkelaarshulpmiddelen → Statistieken).
 
 **Handmatige perioden:** voor maanden van vóór de HA-statistieken (of met foute statistieken) vul je onder `handmatig` de cijfers zelf in, per maand of per periode. Die vervangen de statistieken van die dagen. `temp` (gemiddelde buitentemperatuur) helpt de voorspelling van warmtepomp en gas.
 
@@ -217,18 +217,22 @@ contracten:
     teruglevering: 0.05   # verwachte gemiddelde terugleverprijs
     gas: 1.24
     vast_per_dag: 0.67
+    korting_per_maand: 15 # korting op de maandfactuur (wordt per dag verrekend in de vaste kosten)
 saldering_tot: 2026-12-31
 voorschotten:
   - vanaf: 2026-01-14
     bedrag: 123
-laadpaal_vergoeding:      # per geladen kWh, bijvoorbeeld van een werkgever
+laadpaal_vergoeding:      # per geladen kWh, apart uitbetaald (bijv. door de laadpaaloperator); staat als
+                          # losse kolom in het overzicht, maar telt niet mee in de kosten of de afrekening
   - vanaf: 2025-12-01
     tot: 2026-08-31
     per_kwh: 0.40
-cashback:
+cashback:                 # per contractjaar (jaar van de startdatum), gaat van de jaarkosten af
   2026: 390
 afrekening:               # werkelijke eindafrekening per contractjaar (jaar van de startdatum)
   2025: 1854
+leren_vanaf:              # de voorspelling leert pas vanaf deze maand (bijv. na een verbouwing,
+  gas: 2026-08-01         # logés of een vakantie); minder dan 6 maanden = gemiddelde per dag
 handmatig:                # perioden zonder (goede) statistieken
   2025-12: {gas: 54, opwek: 161, teruglevering: 48, afname: 1386, warmtepomp: 539, laadpaal: 394, temp: 5.6}
   2026-01-01/2026-01-13: {gas: 38, opwek: 37, teruglevering: 5, afname: 871, warmtepomp: 447, laadpaal: 140, temp: 0.1}
