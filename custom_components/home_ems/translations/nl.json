@@ -86,6 +86,30 @@
           "no_temperature_forecast": "OK, zonder temperatuurverwachting",
           "no_price_data": "Geen prijsdata"
         }
+      },
+      "overview_status": {
+        "name": "Status overzicht",
+        "state": {
+          "ok": "OK",
+          "not_configured": "Niet ingesteld",
+          "no_statistics": "Geen statistieken",
+          "invalid_cost_settings": "Ongeldige kosteninstellingen"
+        }
+      },
+      "year_cost_expected": {
+        "name": "Verwachte energiekosten dit jaar"
+      },
+      "settlement_expected": {
+        "name": "Verwachte eindafrekening (+ bijbetalen)"
+      },
+      "month_cost_expected": {
+        "name": "Verwachte energiekosten deze maand"
+      },
+      "own_use_year": {
+        "name": "Eigen verbruik zonnestroom dit jaar"
+      },
+      "year_use_expected": {
+        "name": "Verwacht stroomverbruik dit jaar"
       }
     }
   },
@@ -93,6 +117,13 @@
     "step": {
       "init": {
         "title": "Instellingen Home EMS",
+        "menu_options": {
+          "planner": "Planner en advies",
+          "overview": "Energie- en kostenoverzicht"
+        }
+      },
+      "planner": {
+        "title": "Planner en advies",
         "description": "Databronnen voor de dagplanner en de drempels van het advies. Home EMS draait nog steeds in observatiemodus en verandert niets.",
         "data": {
           "price_entity": "Stroomprijssensor (Jeroen.nl, attribuut prices)",
@@ -108,7 +139,28 @@
           "max_gap_hours": "Langste tijd zonder run (planner)",
           "base_load_kw": "Basisverbruik huis naast de warmtepomp (planner)"
         }
+      },
+      "overview": {
+        "title": "Energie- en kostenoverzicht",
+        "description": "Kies de langetermijnstatistieken (dezelfde als in het Energy-dashboard) en vul contracten en voorschotten in als YAML. Home EMS maakt een maandoverzicht met een voorspelling voor de rest van het jaar en schrijft dat elk uur als CSV (puntkomma, decimale komma) als er een map is opgegeven.",
+        "data": {
+          "stat_import": "Afname net (kWh, een of meer)",
+          "stat_export": "Teruglevering net (kWh, een of meer)",
+          "stat_pv": "Opwek zonnepanelen (kWh, een per omvormer)",
+          "stat_gas": "Gas (m³)",
+          "stat_heat_pump": "Stroom warmtepomp (kWh)",
+          "stat_ev": "Laadpaal (kWh)",
+          "stat_outside": "Buitentemperatuur",
+          "stat_import_cost": "Werkelijke inkoopkosten (EUR, dynamisch contract)",
+          "stat_export_revenue": "Werkelijke terugleververgoeding (EUR, dynamisch contract)",
+          "overview_from": "Overzicht vanaf",
+          "cost_settings": "Contracten, voorschotten, laadpaalvergoeding, cashback (YAML)",
+          "export_dir": "Map voor de CSV-bestanden"
+        }
       }
+    },
+    "error": {
+      "invalid_cost_settings": "De kosteninstellingen zijn geen geldige YAML of missen een veld (elk contract heeft minstens 'vanaf' nodig)."
     }
   }
 }

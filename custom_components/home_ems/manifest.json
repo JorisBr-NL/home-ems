@@ -1,12 +1,17 @@
 {
   "domain": "home_ems",
   "name": "Home EMS",
-  "codeowners": ["@JorisBr-NL"],
+  "codeowners": [
+    "@JorisBr-NL"
+  ],
   "config_flow": true,
+  "dependencies": [
+    "recorder"
+  ],
   "documentation": "https://github.com/JorisBr-NL/home-ems",
   "integration_type": "service",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/JorisBr-NL/home-ems/issues",
   "requirements": [],
-  "version": "0.3.1"
+  "version": "0.4.0"
 }

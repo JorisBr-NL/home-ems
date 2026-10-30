@@ -86,6 +86,30 @@
           "no_temperature_forecast": "OK, without temperature forecast",
           "no_price_data": "No price data"
         }
+      },
+      "overview_status": {
+        "name": "Overview status",
+        "state": {
+          "ok": "OK",
+          "not_configured": "Not configured",
+          "no_statistics": "No statistics",
+          "invalid_cost_settings": "Invalid cost settings"
+        }
+      },
+      "year_cost_expected": {
+        "name": "Expected energy costs this year"
+      },
+      "settlement_expected": {
+        "name": "Expected final bill (+ pay extra)"
+      },
+      "month_cost_expected": {
+        "name": "Expected energy costs this month"
+      },
+      "own_use_year": {
+        "name": "Own use of solar this year"
+      },
+      "year_use_expected": {
+        "name": "Expected electricity use this year"
       }
     }
   },
@@ -93,6 +117,13 @@
     "step": {
       "init": {
         "title": "Home EMS settings",
+        "menu_options": {
+          "planner": "Planner and advice",
+          "overview": "Energy and cost overview"
+        }
+      },
+      "planner": {
+        "title": "Planner and advice",
         "description": "Data sources for the day planner and the thresholds of the advice. Home EMS still runs in observation mode and changes nothing.",
         "data": {
           "price_entity": "Electricity price sensor (Jeroen.nl, attribute prices)",
@@ -108,7 +139,28 @@
           "max_gap_hours": "Longest time without a run (planner)",
           "base_load_kw": "House base load besides the heat pump (planner)"
         }
+      },
+      "overview": {
+        "title": "Energy and cost overview",
+        "description": "Choose the long-term statistics (the same as in the Energy dashboard) and enter contracts and advance payments as YAML. Home EMS builds a monthly overview with a forecast for the rest of the year and, if a folder is given, writes it as CSV (semicolon, decimal comma) every hour.",
+        "data": {
+          "stat_import": "Grid import (kWh, one or more)",
+          "stat_export": "Grid export (kWh, one or more)",
+          "stat_pv": "Solar production (kWh, one per inverter)",
+          "stat_gas": "Gas (m³)",
+          "stat_heat_pump": "Heat pump electricity (kWh)",
+          "stat_ev": "Wallbox (kWh)",
+          "stat_outside": "Outside temperature",
+          "stat_import_cost": "Actual purchase cost (EUR, dynamic contract)",
+          "stat_export_revenue": "Actual export compensation (EUR, dynamic contract)",
+          "overview_from": "Overview from",
+          "cost_settings": "Contracts, advances, wallbox refund, cashback (YAML)",
+          "export_dir": "Folder for the CSV files"
+        }
       }
+    },
+    "error": {
+      "invalid_cost_settings": "The cost settings are not valid YAML or miss a field (each contract needs at least 'vanaf')."
     }
   }
 }
