@@ -69,8 +69,8 @@ from .overview import (
     apply_manual,
     build_overview,
     clean_daily,
+    export_csv,
     parse_settings,
-    to_csv,
     years_csv,
 )
 from .planner import Plan, PlannerSettings, Slot, build_slots, hour_of, plan
@@ -275,8 +275,9 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self.overview_status = OVERVIEW_OK
         folder = options.get(OPT_EXPORT_DIR)
         if folder:
-            files = {f"energy_overzicht_{y.year}.csv": to_csv(y) for y in self.overview}
-            files["energy_overzicht_jaren.csv"] = years_csv(self.overview)
+            # no year in the names: the same files are overwritten, the workbook keeps the history
+            files = {"energy_overzicht_export.csv": export_csv(self.overview),
+                     "energy_overzicht_jaren.csv": years_csv(self.overview)}
             await self.hass.async_add_executor_job(_write_files, folder, files)
 
     def _stat_ids(self, key: str) -> list[str]:

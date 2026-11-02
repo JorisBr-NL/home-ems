@@ -148,15 +148,33 @@ def test_net_export_surplus_of_a_year_earns_the_export_price():
     assert year.as_dict()["costs"] == pytest.approx(365 * 0.25, abs=0.05)
 
 
-def test_csv_uses_semicolon_and_decimal_comma():
+def test_export_csv_follows_workbook_columns():
     years = ov.build_overview(_history(), date(2026, 10, 30), SETTINGS)
-    text = ov.to_csv(years[-1])
-    head = text.splitlines()[0].split(";")
-    assert head[0] == "Maand" and "Warmtepomp kWh" in head
-    first = text.splitlines()[1].split(";")
-    assert first[0] == "2026-01" and "," in first[head.index("Totaal")]
-    assert "Totale kosten" in text
+    lines = ov.export_csv(years).splitlines()
+    head = lines[0].split(";")
+    assert head[:5] == ["Maand", "Dagen", "Status", "Buitentemp gem °C", "Gas m³"]
+    assert head[-3:] == ["Cum voorschot €", "Vergoeding laadpaal €/kWh", "Retour laadpaal € (apart)"]
+    rows = [line.split(";") for line in lines[1:]]
+    # all settlement years in one file, oldest first; months split by a contract change
+    assert rows[0][0] == "jan 2025" and rows[0][1] == "31" and rows[0][2] == "werkelijk"
+    split = [r for r in rows if r[0].startswith("jan 2026")]
+    assert [r[0] for r in split] == ["jan 2026 (1-19)", "jan 2026 (20-31)"]
+    assert [r[1] for r in split] == ["19", "12"]
+    assert split[1][head.index("Cum totaal €")] == split[1][head.index("Totaal €")]  # new year restarts
+    last = rows[-1]
+    assert last[2] == "verwachting" and "," in last[head.index("Totaal €")]
+    assert last[head.index("Saldering (ja/nee)")] in ("ja", "nee")
+    assert rows[0][head.index("Eigen verbruik %")].endswith("%")
     assert ov.years_csv(years).splitlines()[1].startswith("2025;2025-01-01;2026-01-19;vast A;ja;")
+
+
+def test_export_csv_marks_months_after_net_metering():
+    s = ov.parse_settings({"contracten": [{"naam": "A", "vanaf": "2026-01-01", "stroom": 0.25,
+                                           "teruglevering": 0.10}]})
+    days = flat_days(date(2026, 11, 1), date(2027, 1, 31), import_kwh=1, export_kwh=0)
+    rows = [r.split(";") for r in ov.export_csv(ov.build_overview(days, date(2027, 2, 1), s)).splitlines()[1:]]
+    saldering = {r[0]: r[14] for r in rows}
+    assert saldering["dec 2026"] == "ja" and saldering["jan 2027"] == "nee"
 
 
 def test_clean_daily_drops_glitches_and_negative_days():

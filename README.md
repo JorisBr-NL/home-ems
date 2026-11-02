@@ -196,7 +196,11 @@ De entity-id's volgen de taal van HA bij het aanmaken (in het Nederlands bijvoor
 
 **Handmatige perioden:** voor maanden van vóór de HA-statistieken (of met foute statistieken) vul je onder `handmatig` de cijfers zelf in, per maand of per periode. Die vervangen de statistieken van die dagen. `temp` (gemiddelde buitentemperatuur) helpt de voorspelling van warmtepomp en gas.
 
-**CSV:** als er een map is ingesteld (standaard `/share/energie`), werkt Home EMS elk uur bij (alleen als de inhoud veranderd is, dus afgesloten jaren blijven ongemoeid) `energy_overzicht_JJJJ.csv` per jaar en `energy_overzicht_jaren.csv`, met puntkomma's en een decimale komma zodat Excel (NL) ze direct opent.
+**CSV:** als er een map is ingesteld (standaard `/share/energie`), werkt Home EMS elk uur twee bestanden bij (alleen als de inhoud veranderd is), met puntkomma's en een decimale komma zodat Excel (NL) ze direct opent:
+- `energy_overzicht_export.csv`: alle maanden van alle contractjaren, oudste eerst. De kolommen staan in de volgorde van een maandtabblad in Excel (Maand, Dagen, Status, Buitentemp gem °C, Gas m³, Opwek, Teruglevering, Afname, Afname − teruglevering, Verbruik totaal, Warmtepomp, Laadpaal, Algemeen, Eigen verbruik %, Saldering (ja/nee), Vaste kosten, Gas €, Stroom €, Totaal €, Voorschot €, Cum totaal €, Cum voorschot €, Vergoeding laadpaal €/kWh, Retour laadpaal €), zodat je een maand in één keer kunt overplakken. Status is *werkelijk*, *lopend* of *verwachting*; de cumulatieve kolommen beginnen elk contractjaar opnieuw.
+- `energy_overzicht_jaren.csv`: één regel per contractjaar met de totalen.
+
+Tot v0.4.4 heette het maandbestand `energy_overzicht_JJJJ.csv` (één per jaar); die oude bestanden worden niet meer bijgewerkt en kun je weggooien.
 
 **Instellen:** *Configureren* → *Energie- en kostenoverzicht*. Kies de sensoren (dezelfde als in het Energy-dashboard; voor de kostenvelden kun je ook een statistiek zonder sensor kiezen, zoals die van Tibber) en vul de contracten in als YAML:
 
