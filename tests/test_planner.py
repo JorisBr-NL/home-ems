@@ -151,3 +151,27 @@ def test_next_run_and_running_now():
     assert p.next_run(T0) == first
     assert p.running_now(first.start + Q)
     assert planner.plan([], T0, S) is None
+
+
+def test_room_below_target_adds_heat_and_warm_room_uses_stored_heat():
+    base = planner.plan(day(temp=8.0), T0, S)
+    cold = planner.plan(day(temp=8.0), T0, S, living_temp=18.5)
+    warm = planner.plan(day(temp=8.0), T0, S, living_temp=19.6)
+    assert cold.state_kwh == pytest.approx(S.capacity_kwh_k * 0.5)
+    assert cold.heat_need_kwh == pytest.approx(base.heat_need_kwh + S.capacity_kwh_k * 0.5, abs=0.01)
+    assert warm.heat_need_kwh == pytest.approx(base.heat_need_kwh - S.capacity_kwh_k * 0.6, abs=0.01)
+    assert warm.run_hours < base.run_hours < cold.run_hours
+
+
+def test_room_state_is_capped_and_ignored_without_heat_demand():
+    assert planner.state_heat(10.0, S) == pytest.approx(S.capacity_kwh_k * S.max_state_k)
+    assert planner.state_heat(None, S) == 0.0
+    summer = planner.plan(day(temp=20.0), T0, S, living_temp=17.0)
+    assert summer.heat_need_kwh == 0.0 and not summer.runs
+
+
+def test_max_gap_still_applies_when_stored_heat_covers_the_need():
+    # mild day, very warm house: the corrected need is 0, but no 8 h without a run
+    p = planner.plan(day(temp=14.0), T0, S, living_temp=21.0)
+    assert p.heat_need_kwh == 0.0
+    assert p.runs and all(r.reason == "max_gap" for r in p.runs)

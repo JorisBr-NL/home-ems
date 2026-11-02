@@ -110,6 +110,17 @@
       },
       "year_use_expected": {
         "name": "Expected electricity use this year"
+      },
+      "target_setpoint": {
+        "name": "Target setpoint living room"
+      },
+      "negative_price_export_today": {
+        "name": "Export at negative price today"
+      }
+    },
+    "switch": {
+      "ems_enabled": {
+        "name": "EMS active"
       }
     }
   },
@@ -136,7 +147,10 @@
           "min_run_minutes": "Minimum run time",
           "expensive_share_pct": "Price peak: most expensive share of the day",
           "max_gap_hours": "Longest time without a run (planner)",
-          "base_load_kw": "House base load besides the heat pump (planner)"
+          "base_load_kw": "House base load besides the heat pump (planner)",
+          "comfort_min": "Comfort minimum (living room and kitchen)",
+          "comfort_max": "Comfort maximum (target setpoint)",
+          "capacity_kwh_k": "Heat capacity of the house (planner)"
         }
       },
       "overview": {

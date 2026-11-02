@@ -1,7 +1,7 @@
 """Home EMS: energy management for the heat pump, appliances and (later) a battery.
 
-Version 0.3 runs in observation mode only: it reads sensors and publishes what it
-would do, but never writes to devices.
+Version 0.5 runs in observation and shadow mode only: it reads sensors and publishes
+what it would do (advice, plan, target setpoint), but never writes to devices.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 
 from .coordinator import HomeEmsConfigEntry, HomeEmsCoordinator
 
-PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SWITCH]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: HomeEmsConfigEntry) -> bool:

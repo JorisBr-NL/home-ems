@@ -60,8 +60,21 @@ def _plan_attrs(c: HomeEmsCoordinator) -> dict[str, Any]:
         "heat_need_kwh": p.heat_need_kwh,
         "expected_cost": p.expected_cost,
         "baseline_cost": p.baseline_cost,
+        "state_kwh": p.state_kwh,
         "made": _local(p.made),
         "runs": [r.to_dict() | {"start": _local(r.start), "end": _local(r.end)} for r in p.runs],
+    }
+
+
+def _target_attrs(c: HomeEmsCoordinator) -> dict[str, Any]:
+    t = c.target
+    current = c.current_setpoint()
+    return {
+        "mode": "shadow",
+        "source": t.source if t else None,
+        "reason": t.reason if t else None,
+        "current_setpoint": current,
+        "would_write": t.differs_from(current) if t else False,
     }
 
 
@@ -149,6 +162,24 @@ SENSORS: tuple[HomeEmsSensorDescription, ...] = (
         attrs_fn=lambda c: {"reason": c.data.reason, "mode": "observation",
                             "setpoint_hint": c.data.setpoint_hint,
                             "plan_says_run": bool(c.plan and c.plan.running_now(dt_util.now()))},
+    ),
+    # --- arbiter in shadow mode (v0.5)
+    HomeEmsSensorDescription(
+        key="target_setpoint",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value_fn=lambda c: c.target.setpoint if c.target else None,
+        attrs_fn=_target_attrs,
+    ),
+    HomeEmsSensorDescription(
+        key="negative_price_export_today",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        suggested_display_precision=2,
+        value_fn=lambda c: round(c.tracker.stats.negative_price_export_kwh, 3),
     ),
     # --- day planner (v0.3)
     HomeEmsSensorDescription(
