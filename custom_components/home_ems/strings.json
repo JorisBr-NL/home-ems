@@ -116,11 +116,29 @@
       },
       "negative_price_export_today": {
         "name": "Export at negative price today"
+      },
+      "control_status": {
+        "name": "Control status",
+        "state": {
+          "off": "Off",
+          "steady": "Setpoint right",
+          "writing": "Writing",
+          "waiting": "Waiting",
+          "override": "Paused (changed by hand)",
+          "fallback": "Back to comfort setpoint",
+          "error": "Error"
+        }
+      },
+      "setpoint_writes_today": {
+        "name": "Setpoint changes today"
       }
     },
     "switch": {
       "ems_enabled": {
         "name": "EMS active"
+      },
+      "control": {
+        "name": "Control (write setpoint)"
       }
     }
   },
@@ -130,6 +148,7 @@
         "title": "Home EMS settings",
         "menu_options": {
           "planner": "Planner and advice",
+          "control": "Control (write setpoint)",
           "overview": "Energy and cost overview"
         }
       },
@@ -151,6 +170,14 @@
           "comfort_min": "Comfort minimum (living room and kitchen)",
           "comfort_max": "Comfort maximum (target setpoint)",
           "capacity_kwh_k": "Heat capacity of the house (planner)"
+        }
+      },
+      "control": {
+        "title": "Control",
+        "description": "Home EMS writes its target setpoint to the living room thermostat while the switch 'Control (write setpoint)' is on (off by default). Turn off the existing heat pump automations and the kitchen setpoint first, so only one party steers the thermostat.",
+        "data": {
+          "override_hours": "Pause after a setpoint changed by hand",
+          "write_interval_minutes": "Minimum time between two changes"
         }
       },
       "overview": {

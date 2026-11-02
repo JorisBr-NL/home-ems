@@ -53,6 +53,9 @@ from .const import (
     OPT_STAT_OUTSIDE,
     OPT_STAT_PV,
     OPT_WEATHER_ENTITY,
+    CONTROL_DEFAULTS,
+    OPT_OVERRIDE_HOURS,
+    OPT_WRITE_INTERVAL,
     OPTION_DEFAULTS,
     OVERVIEW_BAD_SETTINGS,
     OVERVIEW_NO_DATA,
@@ -67,6 +70,7 @@ from .const import (
     WEATHER_REFRESH,
 )
 from .arbiter import ArbiterSettings, Target, target_setpoint
+from .executor import Action, ExecutorSettings, ExecutorState, step
 from .model import Evaluation, Inputs, RunTracker, Settings, evaluate, prices_today
 from .overview import (
     Usage,
@@ -136,6 +140,10 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         # arbiter in shadow mode: the setpoint it would write, and the EMS on/off switch
         self.target: Target | None = None
         self.enabled = True
+        # executor (v0.6): writes the target to the living room thermostat, off by default
+        self.control = False
+        self.executor = ExecutorState()
+        self.action: Action | None = None
         self.plan_status = PLAN_NO_PRICES
         self._temps: dict[datetime, float] = {}   # hour start (UTC) -> forecast temperature
         self._temps_fetched: datetime | None = None
@@ -147,7 +155,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
     # ------------------------------------------------------------ settings
 
     def option(self, key: str) -> Any:
-        return self.config_entry.options.get(key, OPTION_DEFAULTS.get(key))
+        default = OPTION_DEFAULTS.get(key, CONTROL_DEFAULTS.get(key))
+        return self.config_entry.options.get(key, default)
 
     def settings(self) -> Settings:
         return Settings(
@@ -237,6 +246,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             except Exception:  # the overview must never stop the advice and the planner
                 _LOGGER.exception("Could not build the energy overview")
         self.target = self._target(evaluation, inputs.living_temp, now)
+        await self._async_execute(now)
         return evaluation
 
     # ------------------------------------------------------------ arbiter (shadow mode)
@@ -263,6 +273,56 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         if self.data is not None:
             self.target = self._target(self.data, self.read_inputs(dt_util.now()).living_temp,
                                        dt_util.now())
+        self.async_update_listeners()
+
+    # ------------------------------------------------------------ executor (v0.6)
+
+    def executor_settings(self) -> ExecutorSettings:
+        return ExecutorSettings(
+            min_interval=timedelta(minutes=float(self.option(OPT_WRITE_INTERVAL))),
+            override_hold=timedelta(hours=float(self.option(OPT_OVERRIDE_HOURS))),
+            fallback_setpoint=float(self.option(OPT_COMFORT_SETPOINT)),
+        )
+
+    async def _async_execute(self, now: datetime) -> None:
+        target = self.target
+        if target is None:
+            return
+        action = step(self.executor, target.setpoint, target.source, target.reason,
+                      self.current_setpoint(), now, self.control, self.executor_settings())
+        if action.write is not None:
+            if await self._async_write(action.write):
+                self.executor.record_write(action.write, target.source, now,
+                                           steering=action.status != "fallback")
+                self.tracker.stats.setpoint_writes += 1
+            else:
+                action = Action(None, "error", f"could not write {action.write} C")
+        self.action = action
+
+    async def _async_write(self, setpoint: float) -> bool:
+        entity_id = self.config_entry.data.get(CONF_LIVING_CLIMATE)
+        try:
+            await self.hass.services.async_call(
+                "climate", "set_temperature", {"entity_id": entity_id, "temperature": setpoint},
+                blocking=True)
+        except HomeAssistantError as err:
+            _LOGGER.warning("Could not set %s to %s C: %s", entity_id, setpoint, err)
+            return False
+        _LOGGER.info("Home EMS set %s to %s C", entity_id, setpoint)
+        return True
+
+    async def async_set_control(self, on: bool, restore: bool = False) -> None:
+        """Control switch. Turning it off while steering writes the comfort setpoint once,
+        so the thermostat is not left at a low idle setpoint."""
+        self.control = on
+        if not on and not restore and self.executor.last_written is not None:
+            fallback = float(self.option(OPT_COMFORT_SETPOINT))
+            if await self._async_write(fallback):
+                self.executor.record_write(fallback, "off", dt_util.now(), steering=False)
+                self.tracker.stats.setpoint_writes += 1
+        if not on:
+            self.executor.override_until = None
+            self.action = Action(None, "off", "control switched off")
         self.async_update_listeners()
 
     # ------------------------------------------------------------ planner

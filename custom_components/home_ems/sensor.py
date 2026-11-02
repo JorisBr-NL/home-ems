@@ -24,6 +24,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from .const import OVERVIEW_STATUSES, PLAN_STATUSES
+from .executor import STATUSES as CONTROL_STATUSES
 from .coordinator import HomeEmsConfigEntry, HomeEmsCoordinator
 from .entity import HomeEmsEntity
 from .model import Advice
@@ -180,6 +181,20 @@ SENSORS: tuple[HomeEmsSensorDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         suggested_display_precision=2,
         value_fn=lambda c: round(c.tracker.stats.negative_price_export_kwh, 3),
+    ),
+    # --- executor (v0.6)
+    HomeEmsSensorDescription(
+        key="control_status",
+        device_class=SensorDeviceClass.ENUM,
+        options=CONTROL_STATUSES,
+        value_fn=lambda c: c.action.status if c.action else "off",
+        attrs_fn=lambda c: {"reason": c.action.reason if c.action else None}
+        | c.executor.to_dict(),
+    ),
+    HomeEmsSensorDescription(
+        key="setpoint_writes_today",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.tracker.stats.setpoint_writes,
     ),
     # --- day planner (v0.3)
     HomeEmsSensorDescription(

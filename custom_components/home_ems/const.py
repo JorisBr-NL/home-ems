@@ -88,6 +88,13 @@ cashback: {}
 afrekening: {}
 """
 
+# options (v0.6): control, the executor that writes the target setpoint (own screen,
+# so they are kept apart from OPTION_DEFAULTS, which belong to the planner screen)
+OPT_OVERRIDE_HOURS = "override_hours"            # pause after a setpoint changed by hand
+OPT_WRITE_INTERVAL = "write_interval_minutes"    # minimum time between two changes
+CONTROL_DEFAULTS = {OPT_OVERRIDE_HOURS: 2.0, OPT_WRITE_INTERVAL: 5}
+CONTROL_OPTIONS = tuple(CONTROL_DEFAULTS)
+
 OVERVIEW_REFRESH = timedelta(hours=1)
 
 # overview status (sensor "Overview status")

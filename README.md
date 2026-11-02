@@ -6,9 +6,9 @@ Eigen energiemanagementsysteem voor Home Assistant: stuurt (straks) de Quatt-war
 
 Het ontwerp staat in Obsidian (`Projects/Energie/EMS ontwerp.md`); de analyse waarop de standaardwaarden zijn gebaseerd in `Projects/Energie/Analyse runs en flowmeter.md`.
 
-## Status: versie 0.5.0 – observatie- en schaduwmodus
+## Status: versie 0.6.0 – observatie- en schaduwmodus, sturing optioneel
 
-Home EMS leest sensoren uit en laat zien wat het **zou** doen, sinds v0.5 ook welk setpoint het in de woonkamer zou zetten. Het schrijft niets naar apparaten; je bestaande automatiseringen blijven leidend.
+Home EMS leest sensoren uit en laat zien wat het **zou** doen, sinds v0.5 ook welk setpoint het in de woonkamer zou zetten. Sinds v0.6 kan het dat setpoint ook echt schrijven, maar alleen als je de schakelaar *Sturing* aanzet (standaard uit). Zolang die uit staat, schrijft Home EMS niets en blijven je bestaande automatiseringen leidend.
 
 | Entiteit | Betekenis |
 |---|---|
@@ -39,6 +39,26 @@ Het setpoint blijft altijd tussen het comfortminimum en -maximum (standaard 18 e
 | `sensor.home_ems_target_setpoint` | het setpoint dat Home EMS zou zetten; attributen `source` (`off`, `unknown`, `comfort_min`, `floor`, `keep_running`, `planner`, `pv`, `idle`), `reason`, `current_setpoint` (het setpoint van nu) en `would_write` (het EMS zou de thermostaat nu aanpassen) |
 | `switch.home_ems_ems_enabled` | EMS aan of uit |
 | `sensor.home_ems_negative_price_export_today` | teruglevering vandaag terwijl de marktprijs negatief was (kWh); bij een dynamisch contract kost dat geld |
+
+### Sturing (v0.6)
+
+Met de schakelaar `switch.home_ems_control` (*Sturing (setpoint schrijven)*, standaard **uit**) schrijft Home EMS het gewenste setpoint naar de thermostaat in de woonkamer (`climate.set_temperature`).
+
+- **Alleen bij een wijziging**, en voor dezelfde reden hooguit eens per 5 minuten (instelbaar).
+- **Handmatig gewijzigd** (op de thermostaat of in de app): de sturing pauzeert 2 uur (instelbaar) en gaat daarna verder.
+- **EMS actief uit** of de sturing uit: het comfortsetpoint wordt één keer teruggezet, daarna schrijft Home EMS niets meer.
+- **Geen data** (geen warmtepompvermogen of woonkamertemperatuur) langer dan 10 minuten: terug naar het comfortsetpoint.
+- De stand van de schakelaar blijft bewaard over een herstart; bij het opstarten schrijft Home EMS niets.
+
+**Voor je de sturing aanzet:** zet bestaande automatiseringen die het woonkamer- of keukensetpoint aanpassen (bijvoorbeeld een anti-pendelregeling of een vloerbewaking) uit, en zet een tweede thermostaat die via de woonkamer warmte vraagt laag. Anders sturen twee partijen dezelfde thermostaat.
+
+| Entiteit | Betekenis |
+|---|---|
+| `switch.home_ems_control` | sturing aan of uit |
+| `sensor.home_ems_control_status` | `off`, `steady` (setpoint klopt), `writing`, `waiting`, `override` (gepauzeerd), `fallback` of `error`; attributen `reason`, `last_written`, `last_write`, `last_source`, `override_until` |
+| `sensor.home_ems_setpoint_writes_today` | aantal setpointwijzigingen vandaag |
+
+Instellingen onder *Configureren → Sturing*: de pauze na een handmatige wijziging en de minimale tijd tussen twee wijzigingen.
 
 ### Advies vergelijken met de werkelijkheid (v0.2)
 
@@ -189,7 +209,7 @@ Het plan (paars) loopt vanaf nu; wat er eerder gebeurde, zie je aan de grijze bl
 
 ### Instellingen (v0.3, v0.4)
 
-Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kies je *Planner en advies* of *Energie- en kostenoverzicht*. Onder het eerste: de databronnen hierboven, comfortsetpoint, de band voor de vloerregel, minimale vloermarge, PV-overschot voor een run, minimale runtijd, het deel van de dag dat als prijspiek telt (standaard 25%), de langste tijd zonder run, het basisverbruik van het huis, het comfortminimum en -maximum en de warmtecapaciteit van het huis. Wijzigingen gelden direct.
+Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kies je *Planner en advies*, *Sturing* of *Energie- en kostenoverzicht*. Onder het eerste: de databronnen hierboven, comfortsetpoint, de band voor de vloerregel, minimale vloermarge, PV-overschot voor een run, minimale runtijd, het deel van de dag dat als prijspiek telt (standaard 25%), de langste tijd zonder run, het basisverbruik van het huis, het comfortminimum en -maximum en de warmtecapaciteit van het huis. Wijzigingen gelden direct.
 
 ### Energie- en kostenoverzicht (v0.4)
 

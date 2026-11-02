@@ -48,6 +48,10 @@ from .const import (
     OPT_STAT_OUTSIDE,
     OPT_STAT_PV,
     OPT_WEATHER_ENTITY,
+    CONTROL_DEFAULTS,
+    CONTROL_OPTIONS,
+    OPT_OVERRIDE_HOURS,
+    OPT_WRITE_INTERVAL,
     OPTION_DEFAULTS,
     OVERVIEW_OPTIONS,
 )
@@ -128,15 +132,26 @@ def _meter(multiple: bool = False) -> selector.EntitySelector:
 
 
 class HomeEmsOptionsFlow(OptionsFlow):
-    """Two screens: the planner and advice, and the energy and cost overview."""
+    """Three screens: the planner and advice, control (the executor), and the energy and
+    cost overview."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return self.async_show_menu(step_id="init", menu_options=["planner", "overview"])
+        return self.async_show_menu(step_id="init", menu_options=["planner", "control", "overview"])
 
     def _save(self, keys: tuple[str, ...], user_input: dict[str, Any]) -> ConfigFlowResult:
         """Keep the options of the other screen; cleared fields are dropped."""
         options = {k: v for k, v in self.config_entry.options.items() if k not in keys}
         return self.async_create_entry(data={**options, **user_input})
+
+    async def async_step_control(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            return self._save(CONTROL_OPTIONS, user_input)
+        current = {**CONTROL_DEFAULTS, **self.config_entry.options}
+        schema = vol.Schema({
+            vol.Required(OPT_OVERRIDE_HOURS, default=current[OPT_OVERRIDE_HOURS]): _number(0, 24, 0.5, "h"),
+            vol.Required(OPT_WRITE_INTERVAL, default=current[OPT_WRITE_INTERVAL]): _number(1, 60, 1, "min"),
+        })
+        return self.async_show_form(step_id="control", data_schema=schema)
 
     async def async_step_overview(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
