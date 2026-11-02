@@ -21,6 +21,7 @@ CONF_CHILL_CLIMATE = "chill_climate"
 OPT_PRICE_ENTITY = "price_entity"      # Jeroen.nl stroomprijs, attribute "prices"
 OPT_SOLAR_ENTITY = "solar_entity"      # Jeroen.nl opwekvoorspelling vandaag, attribute "hours"
 OPT_WEATHER_ENTITY = "weather_entity"  # hourly forecast via weather.get_forecasts
+OPT_GAS_ENTITY = "gas_price_entity"    # v0.8: all-in gas price per m3 (Jeroen.nl gasprijs)
 
 # options (v0.3): thresholds, defaults as in model.Settings / planner.PlannerSettings
 OPT_COMFORT_SETPOINT = "comfort_setpoint"
@@ -101,6 +102,18 @@ OPT_BEDROOM_MIN = "bedroom_min_temp"
 OPT_BEDROOM_LEAD = "bedroom_lead_hours"
 BEDROOM_DEFAULTS = {OPT_BEDROOM_MIN: 13.0, OPT_BEDROOM_LEAD: 6.0}
 BEDROOM_OPTIONS = (OPT_BEDROOMS, *BEDROOM_DEFAULTS)
+
+# options (v0.8): PV curtailment and appliances (own screen)
+OPT_PV_POWER = "pv_power_entities"     # live power per inverter (W), one sensor each
+OPT_APPLIANCES = "appliances"          # YAML, see appliances.parse_appliances
+PV_APPLIANCE_OPTIONS = (OPT_PV_POWER, OPT_APPLIANCES)
+APPLIANCES_EXAMPLE = """\
+# Witgoed achter een slimme stekker; Home EMS adviseert de goedkoopste starttijd.
+# - naam: Vaatwasser
+#   kwh: 1.1
+#   duur: 2.5
+#   klaar_voor: "07:00"
+"""
 BEDROOMS_EXAMPLE = """\
 # Radiatorthermostaten in de slaapkamers (alleen een klep; warm water stroomt als de woonkamer vraagt).
 # - entiteit: climate.slaapkamer_1

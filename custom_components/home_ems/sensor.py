@@ -62,6 +62,8 @@ def _plan_attrs(c: HomeEmsCoordinator) -> dict[str, Any]:
         "expected_cost": p.expected_cost,
         "baseline_cost": p.baseline_cost,
         "state_kwh": p.state_kwh,
+        "gas_cost_per_kwh_heat": p.gas_cost_per_kwh_heat,
+        "gas_cheaper_quarters": p.gas_cheaper_quarters,
         "made": _local(p.made),
         "runs": [r.to_dict() | {"start": _local(r.start), "end": _local(r.end)} for r in p.runs],
     }
@@ -181,6 +183,23 @@ SENSORS: tuple[HomeEmsSensorDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         suggested_display_precision=2,
         value_fn=lambda c: round(c.tracker.stats.negative_price_export_kwh, 3),
+    ),
+    # --- PV curtailment and appliances (v0.8, shadow mode)
+    HomeEmsSensorDescription(
+        key="pv_curtail",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c: len(c.curtail.off) if c.curtail else None,
+        attrs_fn=lambda c: {"mode": "shadow", "off": list(c.curtail.off), "reason": c.curtail.reason,
+                            "avoided_export_kwh_today": round(c.curtail_state.avoided_kwh, 3),
+                            "avoided_cost_eur_today": round(c.curtail_state.avoided_eur, 3)}
+        if c.curtail else {},
+    ),
+    HomeEmsSensorDescription(
+        key="appliance_start",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_fn=lambda c: c.appliance_advice[0].start if c.appliance_advice else None,
+        attrs_fn=lambda c: {"mode": "shadow",
+                            "appliances": [a.as_dict() for a in c.appliance_advice]},
     ),
     # --- bedrooms (v0.7, shadow mode)
     HomeEmsSensorDescription(

@@ -134,6 +134,12 @@
       },
       "bedrooms_open": {
         "name": "Bedrooms open"
+      },
+      "pv_curtail": {
+        "name": "PV curtailment (inverters off)"
+      },
+      "appliance_start": {
+        "name": "Best appliance start"
       }
     },
     "switch": {
@@ -153,6 +159,7 @@
           "planner": "Planner and advice",
           "control": "Control (write setpoint)",
           "bedrooms": "Bedrooms",
+          "pv_appliances": "PV curtailment and appliances",
           "overview": "Energy and cost overview"
         }
       },
@@ -173,7 +180,8 @@
           "base_load_kw": "House base load besides the heat pump (planner)",
           "comfort_min": "Comfort minimum (living room and kitchen)",
           "comfort_max": "Comfort maximum (target setpoint)",
-          "capacity_kwh_k": "Heat capacity of the house (planner)"
+          "capacity_kwh_k": "Heat capacity of the house (planner)",
+          "gas_price_entity": "Gas price sensor (Jeroen.nl, all-in per m³)"
         }
       },
       "control": {
@@ -191,6 +199,14 @@
           "bedrooms": "Rooms (YAML: entiteit, naam, doel, bedtijd)",
           "bedroom_min_temp": "Minimum outside the evening window",
           "bedroom_lead_hours": "Evening window before bedtime"
+        }
+      },
+      "pv_appliances": {
+        "title": "PV curtailment and appliances",
+        "description": "Shadow mode. Curtailment: at a negative market price Home EMS shows which inverter it would switch off (each behind its own switch), only when that inverter delivers less than the export. Appliances: the cheapest start before the ready-by time, from the price and solar forecast.",
+        "data": {
+          "pv_power_entities": "Live power per inverter (W, one sensor each)",
+          "appliances": "Appliances (YAML: naam, kwh, duur, klaar_voor)"
         }
       },
       "overview": {
@@ -214,7 +230,8 @@
     },
     "error": {
       "invalid_cost_settings": "The cost settings are not valid YAML or miss a field (each contract needs at least 'vanaf').",
-      "invalid_bedrooms": "The rooms are not valid YAML, or a room misses 'entiteit' (a climate entity)."
+      "invalid_bedrooms": "The rooms are not valid YAML, or a room misses 'entiteit' (a climate entity).",
+      "invalid_appliances": "The appliances are not valid YAML, or an appliance misses 'naam'."
     }
   }
 }

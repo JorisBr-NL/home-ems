@@ -19,15 +19,22 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    BEDROOM_DEFAULTS,
+    CONF_FLOW_RATE,
     CONF_FLOW_TEMPERATURE,
     CONF_GRID_POWER,
-    CONF_FLOW_RATE,
     CONF_HEAT_PUMP_POWER,
     CONF_KITCHEN_CLIMATE,
     CONF_LIVING_CLIMATE,
     CONF_OUTSIDE_TEMPERATURE,
+    CONTROL_DEFAULTS,
     DOMAIN,
+    OPTION_DEFAULTS,
+    OPT_APPLIANCES,
     OPT_BASE_LOAD,
+    OPT_BEDROOMS,
+    OPT_BEDROOM_LEAD,
+    OPT_BEDROOM_MIN,
     OPT_CAPACITY,
     OPT_COMFORT_MAX,
     OPT_COMFORT_MIN,
@@ -37,10 +44,13 @@ from .const import (
     OPT_EXPORT_DIR,
     OPT_FLOOR_MIN_MARGIN,
     OPT_FLOOR_RULE_BAND,
+    OPT_GAS_ENTITY,
     OPT_MAX_GAP,
     OPT_MIN_RUN,
+    OPT_OVERRIDE_HOURS,
     OPT_OVERVIEW_FROM,
     OPT_PRICE_ENTITY,
+    OPT_PV_POWER,
     OPT_PV_RUN_THRESHOLD,
     OPT_SOLAR_ENTITY,
     OPT_STAT_EV,
@@ -53,17 +63,10 @@ from .const import (
     OPT_STAT_OUTSIDE,
     OPT_STAT_PV,
     OPT_WEATHER_ENTITY,
-    BEDROOM_DEFAULTS,
-    CONTROL_DEFAULTS,
-    OPT_BEDROOM_LEAD,
-    OPT_BEDROOM_MIN,
-    OPT_BEDROOMS,
-    OPT_OVERRIDE_HOURS,
     OPT_WRITE_INTERVAL,
-    OPTION_DEFAULTS,
     OVERVIEW_BAD_SETTINGS,
-    OVERVIEW_NO_DATA,
     OVERVIEW_NOT_CONFIGURED,
+    OVERVIEW_NO_DATA,
     OVERVIEW_OK,
     OVERVIEW_REFRESH,
     PLAN_NO_PRICES,
@@ -74,7 +77,9 @@ from .const import (
     WEATHER_REFRESH,
 )
 from .arbiter import ArbiterSettings, Target, target_setpoint
+from .appliances import StartAdvice, best_start, parse_appliances
 from .bedrooms import Bedroom, BedroomSettings, RoomTarget, parse_rooms, room_targets
+from .curtail import CurtailAdvice, CurtailState, advise as curtail_advise
 from .executor import Action, ExecutorSettings, ExecutorState, step
 from .model import Evaluation, Inputs, RunTracker, Settings, evaluate, prices_today
 from .overview import (
@@ -153,6 +158,11 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self.action: Action | None = None
         # bedrooms (v0.7, shadow mode): target per radiator thermostat
         self.room_targets: list[RoomTarget] = []
+        # PV curtailment and appliances (v0.8, shadow mode)
+        self.curtail_state = CurtailState()
+        self.curtail: CurtailAdvice | None = None
+        self.appliance_advice: list[StartAdvice] = []
+        self._slots: list[Slot] = []
         self.plan_status = PLAN_NO_PRICES
         self._temps: dict[datetime, float] = {}   # hour start (UTC) -> forecast temperature
         self._temps_fetched: datetime | None = None
@@ -185,6 +195,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             tz=dt_util.get_default_time_zone(),
             capacity_kwh_k=float(self.option(OPT_CAPACITY)),
             target_temp=float(self.option(OPT_COMFORT_SETPOINT)),
+            gas_price_m3=self._float_state(self.option(OPT_GAS_ENTITY)),
         )
 
     async def _async_setup(self) -> None:
@@ -255,6 +266,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             except Exception:  # the overview must never stop the advice and the planner
                 _LOGGER.exception("Could not build the energy overview")
         self.target = self._target(evaluation, inputs.living_temp, now)
+        self._curtail(inputs, now)
         await self._async_execute(now)
         return evaluation
 
@@ -305,6 +317,31 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             self.target = self._target(self.data, self.read_inputs(dt_util.now()).living_temp,
                                        dt_util.now())
         self.async_update_listeners()
+
+    # ------------------------------------------------------------ PV curtailment (v0.8)
+
+    def _pv_entities(self) -> list[str]:
+        value = self.option(OPT_PV_POWER) or []
+        return [value] if isinstance(value, str) else list(value)
+
+    def _curtail(self, inputs: Inputs, now: datetime) -> None:
+        entities = self._pv_entities()
+        if not entities:
+            self.curtail = None
+            return
+        grid = inputs.grid_power_w
+        export = None if grid is None else max(0.0, -grid)
+        powers = {e: self._float_state(e) for e in entities}
+        self.curtail = curtail_advise(self.curtail_state, powers, export, inputs.market_now, now)
+
+    def _advise_appliances(self, now: datetime) -> None:
+        try:
+            items = parse_appliances(yaml.safe_load(self.option(OPT_APPLIANCES) or "") or [])
+        except (yaml.YAMLError, ValueError) as err:
+            _LOGGER.warning("Invalid appliance settings: %s", err)
+            items = []
+        base = float(self.option(OPT_BASE_LOAD))
+        self.appliance_advice = [best_start(self._slots, now, a, base) for a in items] if self._slots else []
 
     # ------------------------------------------------------------ executor (v0.6)
 
@@ -361,6 +398,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
     async def _async_replan(self, now: datetime) -> None:
         await self._async_refresh_temperatures(now)
         slots = self.build_slots()
+        self._slots = slots
+        self._advise_appliances(now)
         if not slots:
             self.plan, self.plan_status = None, PLAN_NO_PRICES
             return

@@ -11,6 +11,10 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 
 from .const import (
+    APPLIANCES_EXAMPLE,
+    BEDROOMS_EXAMPLE,
+    BEDROOM_DEFAULTS,
+    BEDROOM_OPTIONS,
     CONF_CHILL_CLIMATE,
     CONF_FLOW_RATE,
     CONF_FLOW_TEMPERATURE,
@@ -19,10 +23,17 @@ from .const import (
     CONF_KITCHEN_CLIMATE,
     CONF_LIVING_CLIMATE,
     CONF_OUTSIDE_TEMPERATURE,
+    CONTROL_DEFAULTS,
+    CONTROL_OPTIONS,
     COST_SETTINGS_EXAMPLE,
     DOMAIN,
     NAME,
+    OPTION_DEFAULTS,
+    OPT_APPLIANCES,
     OPT_BASE_LOAD,
+    OPT_BEDROOMS,
+    OPT_BEDROOM_LEAD,
+    OPT_BEDROOM_MIN,
     OPT_CAPACITY,
     OPT_COMFORT_MAX,
     OPT_COMFORT_MIN,
@@ -32,10 +43,13 @@ from .const import (
     OPT_EXPORT_DIR,
     OPT_FLOOR_MIN_MARGIN,
     OPT_FLOOR_RULE_BAND,
+    OPT_GAS_ENTITY,
     OPT_MAX_GAP,
     OPT_MIN_RUN,
+    OPT_OVERRIDE_HOURS,
     OPT_OVERVIEW_FROM,
     OPT_PRICE_ENTITY,
+    OPT_PV_POWER,
     OPT_PV_RUN_THRESHOLD,
     OPT_SOLAR_ENTITY,
     OPT_STAT_EV,
@@ -48,23 +62,15 @@ from .const import (
     OPT_STAT_OUTSIDE,
     OPT_STAT_PV,
     OPT_WEATHER_ENTITY,
-    BEDROOM_DEFAULTS,
-    BEDROOM_OPTIONS,
-    BEDROOMS_EXAMPLE,
-    CONTROL_DEFAULTS,
-    CONTROL_OPTIONS,
-    OPT_BEDROOM_LEAD,
-    OPT_BEDROOM_MIN,
-    OPT_BEDROOMS,
-    OPT_OVERRIDE_HOURS,
     OPT_WRITE_INTERVAL,
-    OPTION_DEFAULTS,
     OVERVIEW_OPTIONS,
+    PV_APPLIANCE_OPTIONS,
 )
+from .appliances import parse_appliances
 from .bedrooms import parse_rooms
 from .overview import parse_settings
 
-PLANNER_OPTIONS = (OPT_PRICE_ENTITY, OPT_SOLAR_ENTITY, OPT_WEATHER_ENTITY, *OPTION_DEFAULTS)
+PLANNER_OPTIONS = (OPT_PRICE_ENTITY, OPT_SOLAR_ENTITY, OPT_WEATHER_ENTITY, OPT_GAS_ENTITY, *OPTION_DEFAULTS)
 
 CLIMATE = selector.EntitySelector(selector.EntitySelectorConfig(domain="climate"))
 POWER = selector.EntitySelector(
@@ -139,11 +145,11 @@ def _meter(multiple: bool = False) -> selector.EntitySelector:
 
 
 class HomeEmsOptionsFlow(OptionsFlow):
-    """Four screens: the planner and advice, control (the executor), the bedrooms, and the
-    energy and cost overview."""
+    """Five screens: the planner and advice, control (the executor), the bedrooms, PV
+    curtailment and appliances, and the energy and cost overview."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return self.async_show_menu(step_id="init", menu_options=["planner", "control", "bedrooms", "overview"])
+        return self.async_show_menu(step_id="init", menu_options=["planner", "control", "bedrooms", "pv_appliances", "overview"])
 
     def _save(self, keys: tuple[str, ...], user_input: dict[str, Any]) -> ConfigFlowResult:
         """Keep the options of the other screen; cleared fields are dropped."""
@@ -177,6 +183,24 @@ class HomeEmsOptionsFlow(OptionsFlow):
             vol.Required(OPT_BEDROOM_LEAD, default=current[OPT_BEDROOM_LEAD]): _number(1, 12, 0.5, "h"),
         })
         return self.async_show_form(step_id="bedrooms", data_schema=schema, errors=errors)
+
+    async def async_step_pv_appliances(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                parse_appliances(yaml.safe_load(user_input.get(OPT_APPLIANCES) or "") or [])
+            except (yaml.YAMLError, ValueError):
+                errors[OPT_APPLIANCES] = "invalid_appliances"
+            else:
+                return self._save(PV_APPLIANCE_OPTIONS, user_input)
+        current = {OPT_APPLIANCES: APPLIANCES_EXAMPLE, **self.config_entry.options}
+        schema = vol.Schema({
+            _optional(current, OPT_PV_POWER): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="sensor", device_class="power", multiple=True)),
+            _optional(current, OPT_APPLIANCES): selector.TextSelector(
+                selector.TextSelectorConfig(multiline=True)),
+        })
+        return self.async_show_form(step_id="pv_appliances", data_schema=schema, errors=errors)
 
     async def async_step_overview(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
@@ -218,6 +242,7 @@ class HomeEmsOptionsFlow(OptionsFlow):
             entity(OPT_PRICE_ENTITY): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
             entity(OPT_SOLAR_ENTITY): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
             entity(OPT_WEATHER_ENTITY): selector.EntitySelector(selector.EntitySelectorConfig(domain="weather")),
+            entity(OPT_GAS_ENTITY): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
             vol.Required(OPT_COMFORT_SETPOINT, default=current[OPT_COMFORT_SETPOINT]): _number(15, 23, 0.1, "°C"),
             vol.Required(OPT_FLOOR_RULE_BAND, default=current[OPT_FLOOR_RULE_BAND]): _number(0, 3, 0.1, "K"),
             vol.Required(OPT_FLOOR_MIN_MARGIN, default=current[OPT_FLOOR_MIN_MARGIN]): _number(-3, 5, 0.1, "K"),

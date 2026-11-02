@@ -134,6 +134,12 @@
       },
       "bedrooms_open": {
         "name": "Slaapkamers open"
+      },
+      "pv_curtail": {
+        "name": "PV aftoppen (omvormers uit)"
+      },
+      "appliance_start": {
+        "name": "Beste starttijd witgoed"
       }
     },
     "switch": {
@@ -153,6 +159,7 @@
           "planner": "Planner en advies",
           "control": "Sturing (setpoint schrijven)",
           "bedrooms": "Slaapkamers",
+          "pv_appliances": "Aftoppen en witgoed",
           "overview": "Energie- en kostenoverzicht"
         }
       },
@@ -173,7 +180,8 @@
           "base_load_kw": "Basisverbruik huis naast de warmtepomp (planner)",
           "comfort_min": "Comfortminimum (woonkamer en keuken)",
           "comfort_max": "Comfortmaximum (gewenst setpoint)",
-          "capacity_kwh_k": "Warmtecapaciteit van het huis (planner)"
+          "capacity_kwh_k": "Warmtecapaciteit van het huis (planner)",
+          "gas_price_entity": "Gasprijssensor (Jeroen.nl, all-in per m³)"
         }
       },
       "control": {
@@ -191,6 +199,14 @@
           "bedrooms": "Kamers (YAML: entiteit, naam, doel, bedtijd)",
           "bedroom_min_temp": "Minimum buiten het avondvenster",
           "bedroom_lead_hours": "Avondvenster vóór bedtijd"
+        }
+      },
+      "pv_appliances": {
+        "title": "Aftoppen en witgoed",
+        "description": "Schaduwmodus. Aftoppen: bij een negatieve marktprijs laat Home EMS zien welke omvormer het zou uitzetten (elk achter een eigen schakelaar), alleen als die minder levert dan de teruglevering. Witgoed: de goedkoopste start vóór de klaar-tijd, uit de prijs- en zonneverwachting.",
+        "data": {
+          "pv_power_entities": "Vermogen per omvormer (W, één sensor per omvormer)",
+          "appliances": "Witgoed (YAML: naam, kwh, duur, klaar_voor)"
         }
       },
       "overview": {
@@ -214,7 +230,8 @@
     },
     "error": {
       "invalid_cost_settings": "De kosteninstellingen zijn geen geldige YAML of missen een veld (elk contract heeft minstens 'vanaf' nodig).",
-      "invalid_bedrooms": "De kamers zijn geen geldige YAML, of bij een kamer ontbreekt 'entiteit' (een climate-entiteit)."
+      "invalid_bedrooms": "De kamers zijn geen geldige YAML, of bij een kamer ontbreekt 'entiteit' (een climate-entiteit).",
+      "invalid_appliances": "Het witgoed is geen geldige YAML, of bij een apparaat ontbreekt 'naam'."
     }
   }
 }
