@@ -16,7 +16,9 @@ DATA = {
 
 
 @pytest.fixture(autouse=True)
-def auto_enable_custom_integrations(enable_custom_integrations):
+def auto_enable_custom_integrations(recorder_mock, enable_custom_integrations):
+    # recorder_mock first: Home EMS depends on the recorder, which must be set up
+    # before the hass fixture
     yield
 
 
