@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 # Load model.py directly so the tests do not import the HA-dependent package __init__.
 _PATH = Path(__file__).parents[1] / "custom_components" / "home_ems" / "model.py"
@@ -16,6 +17,7 @@ _SPEC.loader.exec_module(model)
 Advice, Inputs, RunTracker, evaluate = model.Advice, model.Inputs, model.RunTracker, model.evaluate
 
 DAY = datetime(2026, 10, 24)
+CET = ZoneInfo("Europe/Amsterdam")
 
 
 def inputs(power=5.0, flow=21.0, living=19.5, grid=300.0, price=None):
@@ -108,6 +110,39 @@ def test_is_expensive_takes_the_top_share_of_the_day():
     assert not model.is_expensive(0.20, day, 0.25)
     assert not model.is_expensive(0.40, day, 0.0)     # share 0 = never a peak
     assert not model.is_expensive(None, day, 0.25) and not model.is_expensive(0.40, (), 0.25)
+
+
+def quarter_rows(day, prices):
+    """Jeroen.nl-style rows (`today` attribute), UTC start times, for a local day in CET."""
+    first = datetime(day.year, day.month, day.day, tzinfo=timezone.utc) - timedelta(hours=1)
+    return [{"start": (first + i * timedelta(minutes=15)).isoformat(), "price": p}
+            for i, p in enumerate(prices)]
+
+
+def test_price_peak_ranks_the_whole_day_not_what_is_left():
+    # Nov 2026 (CET): morning and evening peak at 0.40, rest 0.20; at 23:30 only two
+    # cheap quarters are left, which must not count as a peak
+    day = [0.20] * 96
+    day[28:36] = [0.40] * 8      # 07:00-09:00
+    day[68:84] = [0.40] * 16     # 17:00-21:00
+    rows = quarter_rows(datetime(2026, 11, 2), day)
+    rows += quarter_rows(datetime(2026, 11, 3), [0.90] * 96)    # tomorrow is left out
+    late = datetime(2026, 11, 2, 23, 30, tzinfo=CET)
+    price_now, prices = model.prices_today(rows, late)
+    assert price_now == 0.20 and len(prices) == 96
+    assert not model.is_expensive(price_now, prices, 0.25)
+    # only the rest of the day (the old behaviour) would have made it a peak
+    assert model.is_expensive(price_now, prices[-2:], 0.25)
+    evening = datetime(2026, 11, 2, 18, 0, tzinfo=CET)
+    assert model.is_expensive(*model.prices_today(rows, evening), 0.25)
+
+
+def test_prices_today_skips_bad_rows():
+    rows = [{"start": "2026-11-02T10:00:00+00:00", "price": "x"}, {"price": 0.3},
+            {"start": "2026-11-02T10:00:00", "price": 0.3},             # no time zone
+            {"start": "2026-11-02T10:00:00+00:00", "price": 0.25}]
+    assert model.prices_today(rows, datetime(2026, 11, 2, 11, 5, tzinfo=CET)) == (0.25, (0.25,))
+    assert model.prices_today([], datetime(2026, 11, 2, 11, 5, tzinfo=CET)) == (None, ())
 
 
 def test_keep_running_until_minimum_then_running():

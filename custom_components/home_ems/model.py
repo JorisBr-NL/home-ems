@@ -198,6 +198,25 @@ def is_running(inputs: Inputs, settings: Settings) -> bool | None:
     return inputs.heat_pump_power_w > settings.running_threshold_w
 
 
+def prices_today(rows: list[dict], now: datetime) -> tuple[float | None, tuple[float, ...]]:
+    """Price of the current quarter and all quarter prices of today (the local day of
+    `now`, an aware datetime). `rows` must cover the whole day, including quarters that
+    are already over (the `today` attribute of the Jeroen.nl price sensor, not
+    `prices`, which starts at now): otherwise the peak shifts to whatever is left."""
+    day: list[tuple[datetime, float]] = []
+    for row in rows or []:
+        try:
+            start = datetime.fromisoformat(str(row["start"]))
+            price = float(row["price"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if start.tzinfo is not None and start.astimezone(now.tzinfo).date() == now.date():
+            day.append((start, price))
+    day.sort()
+    current = [p for s, p in day if s <= now < s + timedelta(minutes=15)]
+    return (current[-1] if current else None), tuple(p for _, p in day)
+
+
 def is_expensive(price_now: float | None, day_prices: tuple[float, ...], share: float) -> bool:
     """True when the current price is among the `share` most expensive quarters of today."""
     if price_now is None or not day_prices or share <= 0:

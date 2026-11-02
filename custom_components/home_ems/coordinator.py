@@ -61,7 +61,7 @@ from .const import (
     UPDATE_INTERVAL,
     WEATHER_REFRESH,
 )
-from .model import Evaluation, Inputs, RunTracker, Settings, evaluate
+from .model import Evaluation, Inputs, RunTracker, Settings, evaluate, prices_today
 from .overview import (
     Usage,
     YearSummary,
@@ -191,26 +191,12 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         known = [v for v in values if v is not None]
         return sum(known) if known else None
 
-    def _prices_today(self, now: datetime) -> tuple[float | None, tuple[float, ...]]:
-        """Price of the current quarter and all known quarter prices of today, from the
-        `prices` attribute of the Jeroen.nl price sensor."""
-        state = self.hass.states.get(self.option(OPT_PRICE_ENTITY) or "")
-        rows = []
-        for row in (state.attributes.get("prices", []) if state else []):
-            start = dt_util.parse_datetime(str(row.get("start")))
-            try:
-                price = float(row["price"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            if start is not None and dt_util.as_local(start).date() == now.date():
-                rows.append((start, price))
-        rows.sort()
-        current = [p for s, p in rows if s <= now < s + timedelta(minutes=15)]
-        return (current[-1] if current else None), tuple(p for _, p in rows)
-
     def read_inputs(self, now: datetime) -> Inputs:
         data = self.config_entry.data
-        price_now, day_prices = self._prices_today(now)
+        # `today` holds every quarter of the day; `prices` starts at now (for planning)
+        price_state = self.hass.states.get(self.option(OPT_PRICE_ENTITY) or "")
+        price_now, day_prices = prices_today(
+            price_state.attributes.get("today", []) if price_state else [], now)
         return Inputs(
             heat_pump_power_w=self._heat_pump_power(),
             flow_temp=self._float_state(data.get(CONF_FLOW_TEMPERATURE)),
