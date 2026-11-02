@@ -40,8 +40,9 @@ class PlannerSettings:
     capacity_kwh_k: float = 15.0
     target_temp: float = 19.0
     max_state_k: float = 2.0          # cap on the difference that is counted
-    # Hybrid: when heat from the heat pump costs more than heat from the gas boiler
-    # (frost, price peak), no run is planned for cost; the max-gap rule stays.
+    # Hybrid: the heat pump decides itself between compressor and gas boiler, but only
+    # when the thermostat asks for heat. So where the boiler gives cheaper heat (frost,
+    # price peak) the quarter is valued at the gas cost (no electricity), not skipped.
     gas_price_m3: float | None = None  # all-in EUR per m3; None = ignore gas
     gas_kwh_m3: float = 9.77           # calorific value
     boiler_efficiency: float = 0.9
@@ -102,7 +103,7 @@ class Plan:
     baseline_cost: float = 0.0   # same heat at the average cost per kWh heat of the horizon
     state_kwh: float = 0.0       # part of the heat need from the room being below target
     gas_cost_per_kwh_heat: float | None = None
-    gas_cheaper_quarters: int = 0  # quarters where the boiler gives cheaper heat
+    gas_cheaper_quarters: int = 0  # quarters where the boiler gives cheaper heat (valued at gas)
 
     @property
     def run_hours(self) -> float:
@@ -205,7 +206,15 @@ def plan(slots: list[Slot], now: datetime, s: PlannerSettings | None = None,
                    key=lambda x: x.start)
     if not slots:
         return None
+    gas = gas_heat_cost(s)
     costs = [slot_cost(x, s) for x in slots]
+    gas_quarters = 0
+    if gas is not None:
+        hours = QUARTER.total_seconds() / 3600
+        for k, c in enumerate(costs):
+            if c.cost_per_kwh_heat > gas:
+                gas_quarters += 1
+                costs[k] = SlotCost(c.slot, c.cop, 0.0, 0.0, gas * s.heat_rate_kw * hours, gas)
     season_need = heat_need(slots, s)
     state = state_heat(living_temp, s) if season_need > 0 else 0.0   # only in the heating season
     need = max(0.0, season_need + state)
@@ -227,12 +236,9 @@ def plan(slots: list[Slot], now: datetime, s: PlannerSettings | None = None,
     def free(i: int) -> bool:
         return all(abs(i - j) >= per_block for j in chosen)
 
-    gas = gas_heat_cost(s)
     for i in sorted(starts, key=lambda i: (block_cost(i), i)):
         if len(chosen) >= blocks_needed:
             break
-        if gas is not None and block_cost(i) > gas:
-            break   # sorted by cost: every remaining block is dearer than gas
         if free(i):
             chosen.append(i)
             reasons[i] = "cheapest"
@@ -268,7 +274,7 @@ def plan(slots: list[Slot], now: datetime, s: PlannerSettings | None = None,
                 runs=tuple(runs), expected_cost=round(sum(r.cost for r in runs), 3),
                 baseline_cost=round(avg_cost_heat * planned_heat, 3), state_kwh=round(state, 2),
                 gas_cost_per_kwh_heat=round(gas, 4) if gas is not None else None,
-                gas_cheaper_quarters=sum(1 for c in costs if gas is not None and c.cost_per_kwh_heat > gas))
+                gas_cheaper_quarters=gas_quarters)
 
 
 def _merge(chosen: list[int], costs: list[SlotCost], per_block: int, reasons: dict[int, str],
