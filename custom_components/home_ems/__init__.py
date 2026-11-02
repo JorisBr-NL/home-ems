@@ -1,7 +1,8 @@
 """Home EMS: energy management for the heat pump, appliances and (later) a battery.
 
-Version 0.5 runs in observation and shadow mode only: it reads sensors and publishes
-what it would do (advice, plan, target setpoint), but never writes to devices.
+From version 0.6 it can write its target setpoint to the living room thermostat, but
+only while the 'Control' switch is on (off by default); otherwise it only publishes
+what it would do (advice, plan, target setpoint).
 """
 from __future__ import annotations
 

@@ -116,11 +116,29 @@
       },
       "negative_price_export_today": {
         "name": "Teruglevering bij negatieve prijs vandaag"
+      },
+      "control_status": {
+        "name": "Status sturing",
+        "state": {
+          "off": "Uit",
+          "steady": "Setpoint klopt",
+          "writing": "Schrijft",
+          "waiting": "Wacht",
+          "override": "Gepauzeerd (handmatig gewijzigd)",
+          "fallback": "Terug naar comfortsetpoint",
+          "error": "Fout"
+        }
+      },
+      "setpoint_writes_today": {
+        "name": "Setpointwijzigingen vandaag"
       }
     },
     "switch": {
       "ems_enabled": {
         "name": "EMS actief"
+      },
+      "control": {
+        "name": "Sturing (setpoint schrijven)"
       }
     }
   },
@@ -130,6 +148,7 @@
         "title": "Instellingen Home EMS",
         "menu_options": {
           "planner": "Planner en advies",
+          "control": "Sturing (setpoint schrijven)",
           "overview": "Energie- en kostenoverzicht"
         }
       },
@@ -151,6 +170,14 @@
           "comfort_min": "Comfortminimum (woonkamer en keuken)",
           "comfort_max": "Comfortmaximum (gewenst setpoint)",
           "capacity_kwh_k": "Warmtecapaciteit van het huis (planner)"
+        }
+      },
+      "control": {
+        "title": "Sturing",
+        "description": "Home EMS schrijft het gewenste setpoint naar de thermostaat in de woonkamer zolang de schakelaar 'Sturing (setpoint schrijven)' aan staat (standaard uit). Zet eerst de bestaande warmtepompautomatiseringen en het keukensetpoint uit, zodat maar één partij de thermostaat stuurt.",
+        "data": {
+          "override_hours": "Pauze na een handmatig gewijzigd setpoint",
+          "write_interval_minutes": "Minimale tijd tussen twee wijzigingen"
         }
       },
       "overview": {

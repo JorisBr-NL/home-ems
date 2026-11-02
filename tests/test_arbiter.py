@@ -76,3 +76,15 @@ def test_differs_from_current_setpoint():
     t = target(ev(Advice.RUN, "floor"), living=19.1)
     assert t.differs_from(19.0) and t.differs_from(None) and not t.differs_from(19.3)
     assert not target(ev(Advice.WAIT), enabled=False).differs_from(19.0)
+
+
+def test_current_setpoint_is_kept_while_it_still_asks_for_heat():
+    run = ev(Advice.RUNNING, running=True)
+    t = arbiter.target_setpoint(run, 19.3, True, current_setpoint=19.4)
+    assert (t.setpoint, t.source) == (19.4, "planner")      # room 19.3 < 19.4: no rewrite
+    t = arbiter.target_setpoint(run, 19.4, True, current_setpoint=19.4)
+    assert t.setpoint == 19.5                                # room reached it: one step up
+    t = arbiter.target_setpoint(run, 19.0, True, current_setpoint=19.6)
+    assert t.setpoint == 19.1                                # gap too large: back to + 0.1
+    t = arbiter.target_setpoint(ev(Advice.WAIT), 19.0, False, current_setpoint=19.2)
+    assert t.setpoint == 18.0                                # idle is not kept

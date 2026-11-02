@@ -87,6 +87,7 @@ class DayStats:
     # export while the market price is negative: with a dynamic contract this costs
     # money, and it shows whether switching off the inverters is worth it
     negative_price_export_kwh: float = 0.0
+    setpoint_writes: int = 0           # setpoints written by the executor (v0.6)
 
 
 @dataclass
