@@ -53,7 +53,11 @@ from .const import (
     OPT_STAT_OUTSIDE,
     OPT_STAT_PV,
     OPT_WEATHER_ENTITY,
+    BEDROOM_DEFAULTS,
     CONTROL_DEFAULTS,
+    OPT_BEDROOM_LEAD,
+    OPT_BEDROOM_MIN,
+    OPT_BEDROOMS,
     OPT_OVERRIDE_HOURS,
     OPT_WRITE_INTERVAL,
     OPTION_DEFAULTS,
@@ -70,6 +74,7 @@ from .const import (
     WEATHER_REFRESH,
 )
 from .arbiter import ArbiterSettings, Target, target_setpoint
+from .bedrooms import Bedroom, BedroomSettings, RoomTarget, parse_rooms, room_targets
 from .executor import Action, ExecutorSettings, ExecutorState, step
 from .model import Evaluation, Inputs, RunTracker, Settings, evaluate, prices_today
 from .overview import (
@@ -114,6 +119,8 @@ def _write_files(folder: str, files: dict[str, str]) -> None:
         target.write_text(text, encoding="utf-8-sig")
 
 STORAGE_VERSION = 1
+# arbiter sources that start or hold a run: warm water flows to the bedrooms
+RUN_SOURCES = ("comfort_min", "floor", "keep_running", "planner", "pv")
 SAVE_DELAY = 60  # seconds
 
 type HomeEmsConfigEntry = ConfigEntry[HomeEmsCoordinator]
@@ -144,6 +151,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self.control = False
         self.executor = ExecutorState()
         self.action: Action | None = None
+        # bedrooms (v0.7, shadow mode): target per radiator thermostat
+        self.room_targets: list[RoomTarget] = []
         self.plan_status = PLAN_NO_PRICES
         self._temps: dict[datetime, float] = {}   # hour start (UTC) -> forecast temperature
         self._temps_fetched: datetime | None = None
@@ -155,7 +164,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
     # ------------------------------------------------------------ settings
 
     def option(self, key: str) -> Any:
-        default = OPTION_DEFAULTS.get(key, CONTROL_DEFAULTS.get(key))
+        default = OPTION_DEFAULTS.get(key, CONTROL_DEFAULTS.get(key, BEDROOM_DEFAULTS.get(key)))
         return self.config_entry.options.get(key, default)
 
     def settings(self) -> Settings:
@@ -259,8 +268,30 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
 
     def _target(self, evaluation: Evaluation, living_temp: float | None, now: datetime) -> Target:
         plan_now = bool(self.plan and self.plan.running_now(now))
-        return target_setpoint(evaluation, living_temp, plan_now, self.enabled,
-                               self.arbiter_settings(), self.current_setpoint())
+        args = (evaluation, living_temp, plan_now, self.enabled, self.arbiter_settings(),
+                self.current_setpoint())
+        target = target_setpoint(*args)
+        rooms = self.bedrooms() if self.enabled else []
+        if not rooms:
+            self.room_targets = []
+            return target
+        flowing = bool(evaluation.heat_pump_running) or target.source in RUN_SOURCES
+        temps = {r.entity_id: self._climate_temperature(r.entity_id) for r in rooms}
+        self.room_targets = room_targets(rooms, temps, now, flowing, self.bedroom_settings())
+        if any(r.needs_run for r in self.room_targets):
+            target = target_setpoint(*args, bedroom_call=True)
+        return target
+
+    def bedrooms(self) -> list[Bedroom]:
+        try:
+            return parse_rooms(yaml.safe_load(self.option(OPT_BEDROOMS) or "") or [])
+        except (yaml.YAMLError, ValueError) as err:
+            _LOGGER.warning("Invalid bedroom settings: %s", err)
+            return []
+
+    def bedroom_settings(self) -> BedroomSettings:
+        return BedroomSettings(min_temp=float(self.option(OPT_BEDROOM_MIN)),
+                               lead=timedelta(hours=float(self.option(OPT_BEDROOM_LEAD))))
 
     def current_setpoint(self) -> float | None:
         state = self.hass.states.get(self.config_entry.data.get(CONF_LIVING_CLIMATE) or "")

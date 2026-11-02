@@ -48,13 +48,20 @@ from .const import (
     OPT_STAT_OUTSIDE,
     OPT_STAT_PV,
     OPT_WEATHER_ENTITY,
+    BEDROOM_DEFAULTS,
+    BEDROOM_OPTIONS,
+    BEDROOMS_EXAMPLE,
     CONTROL_DEFAULTS,
     CONTROL_OPTIONS,
+    OPT_BEDROOM_LEAD,
+    OPT_BEDROOM_MIN,
+    OPT_BEDROOMS,
     OPT_OVERRIDE_HOURS,
     OPT_WRITE_INTERVAL,
     OPTION_DEFAULTS,
     OVERVIEW_OPTIONS,
 )
+from .bedrooms import parse_rooms
 from .overview import parse_settings
 
 PLANNER_OPTIONS = (OPT_PRICE_ENTITY, OPT_SOLAR_ENTITY, OPT_WEATHER_ENTITY, *OPTION_DEFAULTS)
@@ -132,11 +139,11 @@ def _meter(multiple: bool = False) -> selector.EntitySelector:
 
 
 class HomeEmsOptionsFlow(OptionsFlow):
-    """Three screens: the planner and advice, control (the executor), and the energy and
-    cost overview."""
+    """Four screens: the planner and advice, control (the executor), the bedrooms, and the
+    energy and cost overview."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return self.async_show_menu(step_id="init", menu_options=["planner", "control", "overview"])
+        return self.async_show_menu(step_id="init", menu_options=["planner", "control", "bedrooms", "overview"])
 
     def _save(self, keys: tuple[str, ...], user_input: dict[str, Any]) -> ConfigFlowResult:
         """Keep the options of the other screen; cleared fields are dropped."""
@@ -152,6 +159,24 @@ class HomeEmsOptionsFlow(OptionsFlow):
             vol.Required(OPT_WRITE_INTERVAL, default=current[OPT_WRITE_INTERVAL]): _number(1, 60, 1, "min"),
         })
         return self.async_show_form(step_id="control", data_schema=schema)
+
+    async def async_step_bedrooms(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                parse_rooms(yaml.safe_load(user_input.get(OPT_BEDROOMS) or "") or [])
+            except (yaml.YAMLError, ValueError):
+                errors[OPT_BEDROOMS] = "invalid_bedrooms"
+            else:
+                return self._save(BEDROOM_OPTIONS, user_input)
+        current = {OPT_BEDROOMS: BEDROOMS_EXAMPLE, **BEDROOM_DEFAULTS, **self.config_entry.options}
+        schema = vol.Schema({
+            _optional(current, OPT_BEDROOMS): selector.TextSelector(
+                selector.TextSelectorConfig(multiline=True)),
+            vol.Required(OPT_BEDROOM_MIN, default=current[OPT_BEDROOM_MIN]): _number(5, 18, 0.5, "°C"),
+            vol.Required(OPT_BEDROOM_LEAD, default=current[OPT_BEDROOM_LEAD]): _number(1, 12, 0.5, "h"),
+        })
+        return self.async_show_form(step_id="bedrooms", data_schema=schema, errors=errors)
 
     async def async_step_overview(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}

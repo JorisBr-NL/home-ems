@@ -95,6 +95,20 @@ OPT_WRITE_INTERVAL = "write_interval_minutes"    # minimum time between two chan
 CONTROL_DEFAULTS = {OPT_OVERRIDE_HOURS: 2.0, OPT_WRITE_INTERVAL: 5}
 CONTROL_OPTIONS = tuple(CONTROL_DEFAULTS)
 
+# options (v0.7): bedrooms (own screen); rooms as YAML, see bedrooms.parse_rooms
+OPT_BEDROOMS = "bedrooms"
+OPT_BEDROOM_MIN = "bedroom_min_temp"
+OPT_BEDROOM_LEAD = "bedroom_lead_hours"
+BEDROOM_DEFAULTS = {OPT_BEDROOM_MIN: 13.0, OPT_BEDROOM_LEAD: 6.0}
+BEDROOM_OPTIONS = (OPT_BEDROOMS, *BEDROOM_DEFAULTS)
+BEDROOMS_EXAMPLE = """\
+# Radiatorthermostaten in de slaapkamers (alleen een klep; warm water stroomt als de woonkamer vraagt).
+# - entiteit: climate.slaapkamer_1
+#   naam: Slaapkamer 1
+#   doel: 17
+#   bedtijd: "20:00"
+"""
+
 OVERVIEW_REFRESH = timedelta(hours=1)
 
 # overview status (sensor "Overview status")

@@ -131,6 +131,9 @@
       },
       "setpoint_writes_today": {
         "name": "Setpointwijzigingen vandaag"
+      },
+      "bedrooms_open": {
+        "name": "Slaapkamers open"
       }
     },
     "switch": {
@@ -149,6 +152,7 @@
         "menu_options": {
           "planner": "Planner en advies",
           "control": "Sturing (setpoint schrijven)",
+          "bedrooms": "Slaapkamers",
           "overview": "Energie- en kostenoverzicht"
         }
       },
@@ -180,6 +184,15 @@
           "write_interval_minutes": "Minimale tijd tussen twee wijzigingen"
         }
       },
+      "bedrooms": {
+        "title": "Slaapkamers",
+        "description": "Radiatorthermostaten in de slaapkamers openen alleen een klep; warm water stroomt als de woonkamer warmte vraagt. Home EMS zet ze open tijdens runs in het avondvenster vóór bedtijd, en vraagt vlak voor bedtijd om een korte run als een kamer nog te koud is. Schaduwmodus: er wordt niets geschreven.",
+        "data": {
+          "bedrooms": "Kamers (YAML: entiteit, naam, doel, bedtijd)",
+          "bedroom_min_temp": "Minimum buiten het avondvenster",
+          "bedroom_lead_hours": "Avondvenster vóór bedtijd"
+        }
+      },
       "overview": {
         "title": "Energie- en kostenoverzicht",
         "description": "Kies de langetermijnstatistieken (dezelfde als in het Energy-dashboard) en vul contracten en voorschotten in als YAML. Home EMS maakt een maandoverzicht met een voorspelling voor de rest van het jaar en schrijft dat elk uur als CSV (puntkomma, decimale komma) als er een map is opgegeven.",
@@ -200,7 +213,8 @@
       }
     },
     "error": {
-      "invalid_cost_settings": "De kosteninstellingen zijn geen geldige YAML of missen een veld (elk contract heeft minstens 'vanaf' nodig)."
+      "invalid_cost_settings": "De kosteninstellingen zijn geen geldige YAML of missen een veld (elk contract heeft minstens 'vanaf' nodig).",
+      "invalid_bedrooms": "De kamers zijn geen geldige YAML, of bij een kamer ontbreekt 'entiteit' (een climate-entiteit)."
     }
   }
 }

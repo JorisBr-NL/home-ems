@@ -6,7 +6,7 @@ Eigen energiemanagementsysteem voor Home Assistant: stuurt (straks) de Quatt-war
 
 Het ontwerp staat in Obsidian (`Projects/Energie/EMS ontwerp.md`); de analyse waarop de standaardwaarden zijn gebaseerd in `Projects/Energie/Analyse runs en flowmeter.md`.
 
-## Status: versie 0.6.0 – observatie- en schaduwmodus, sturing optioneel
+## Status: versie 0.7.0 – observatie- en schaduwmodus, sturing optioneel
 
 Home EMS leest sensoren uit en laat zien wat het **zou** doen, sinds v0.5 ook welk setpoint het in de woonkamer zou zetten. Sinds v0.6 kan het dat setpoint ook echt schrijven, maar alleen als je de schakelaar *Sturing* aanzet (standaard uit). Zolang die uit staat, schrijft Home EMS niets en blijven je bestaande automatiseringen leidend.
 
@@ -28,17 +28,46 @@ Advies, anti-pendelen en de dagplanner willen allemaal iets van dezelfde thermos
 1. **EMS uit** (`switch.home_ems_ems_enabled`): geen setpoint, het schema van de thermostaat is leidend. De stand blijft bewaard over een herstart.
 2. **Comfortminimum**, daarna de **vloerregel**: run starten met de woonkamer + 0,2 °C.
 3. **Minimale looptijd**: een run korter dan de minimale runtijd vasthouden met de woonkamer + 0,1 °C.
-4. **Planner**: een geplande run starten (+ 0,2 °C) of vasthouden (+ 0,1 °C).
-5. **PV-overschot**: een run starten, of een lopende run vasthouden zolang het huis nog teruglevert.
-6. **Rust**: het comfortminimum, zodat de thermostaat zelf alleen nog als vangnet warmte vraagt.
+4. **Slaapkamer** (sinds v0.7): een slaapkamer is vlak voor bedtijd nog te koud, dus een korte run starten of vasthouden (zie hieronder).
+5. **Planner**: een geplande run starten (+ 0,2 °C) of vasthouden (+ 0,1 °C).
+6. **PV-overschot**: een run starten, of een lopende run vasthouden zolang het huis nog teruglevert.
+7. **Rust**: het comfortminimum, zodat de thermostaat zelf alleen nog als vangnet warmte vraagt.
 
 Het setpoint blijft altijd tussen het comfortminimum en -maximum (standaard 18 en 21,5 °C).
 
 | Entiteit | Betekenis |
 |---|---|
-| `sensor.home_ems_target_setpoint` | het setpoint dat Home EMS zou zetten; attributen `source` (`off`, `unknown`, `comfort_min`, `floor`, `keep_running`, `planner`, `pv`, `idle`), `reason`, `current_setpoint` (het setpoint van nu) en `would_write` (het EMS zou de thermostaat nu aanpassen) |
+| `sensor.home_ems_target_setpoint` | het setpoint dat Home EMS zou zetten; attributen `source` (`off`, `unknown`, `comfort_min`, `floor`, `keep_running`, `bedroom`, `planner`, `pv`, `idle`), `reason`, `current_setpoint` (het setpoint van nu) en `would_write` (het EMS zou de thermostaat nu aanpassen) |
 | `switch.home_ems_ems_enabled` | EMS aan of uit |
 | `sensor.home_ems_negative_price_export_today` | teruglevering vandaag terwijl de marktprijs negatief was (kWh); bij een dynamisch contract kost dat geld |
+
+### Slaapkamers (v0.7, schaduwmodus)
+
+Radiatorthermostaten in de slaapkamers openen alleen een klep: warm water stroomt pas als de woonkamer warmte vraagt. Home EMS bepaalt per kamer het setpoint:
+
+- **Buiten het avondvenster** (standaard 6 uur vóór bedtijd tot bedtijd): het minimum (standaard 13 °C), de klep blijft dicht.
+- **In het avondvenster, tijdens een run** (gepland, op zon, vloer, minimale looptijd): het doel van de kamer, zodat de kamer meewarmt in een run die er toch al is.
+- **Vlak voor bedtijd** (laatste 90 minuten) en de kamer meer dan 0,3 °C onder het doel: het doel, en de arbiter start een korte run in de woonkamer (bron `bedroom`), anders komt er geen warm water.
+- Anders: het minimum.
+
+Instellen onder *Configureren → Slaapkamers*, als YAML:
+
+```yaml
+- entiteit: climate.slaapkamer_1
+  naam: Slaapkamer 1
+  doel: 17
+  bedtijd: "20:00"
+- entiteit: climate.slaapkamer_2
+  naam: Slaapkamer 2
+  doel: 17
+  bedtijd: "22:00"
+```
+
+| Entiteit | Betekenis |
+|---|---|
+| `sensor.home_ems_bedrooms_open` | aantal kamers waarvan de klep nu open zou staan; attribuut `rooms` met per kamer `setpoint`, `reason`, `temperature` en `needs_run` |
+
+De slaapkamers worden nog niet geschreven; de sturing (v0.6) schrijft alleen de woonkamer.
 
 ### Sturing (v0.6)
 
@@ -290,7 +319,7 @@ cards:
 
 ### Instellingen (v0.3, v0.4)
 
-Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kies je *Planner en advies*, *Sturing* of *Energie- en kostenoverzicht*. Onder het eerste: de databronnen hierboven, comfortsetpoint, de band voor de vloerregel, minimale vloermarge, PV-overschot voor een run, minimale runtijd, het deel van de dag dat als prijspiek telt (standaard 25%), de langste tijd zonder run, het basisverbruik van het huis, het comfortminimum en -maximum en de warmtecapaciteit van het huis. Wijzigingen gelden direct.
+Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kies je *Planner en advies*, *Sturing*, *Slaapkamers* of *Energie- en kostenoverzicht*. Onder het eerste: de databronnen hierboven, comfortsetpoint, de band voor de vloerregel, minimale vloermarge, PV-overschot voor een run, minimale runtijd, het deel van de dag dat als prijspiek telt (standaard 25%), de langste tijd zonder run, het basisverbruik van het huis, het comfortminimum en -maximum en de warmtecapaciteit van het huis. Wijzigingen gelden direct.
 
 ### Energie- en kostenoverzicht (v0.4)
 

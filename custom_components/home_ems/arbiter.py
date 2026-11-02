@@ -5,7 +5,7 @@ the same thermostat. The arbiter turns them into one target setpoint per moment,
 fixed order of priority:
 
     switched off > comfort minimum > floor > keep running (minimum run time)
-    > planner > PV surplus (start, or hold while still exporting) > idle
+    > bedroom below target before bedtime > planner > PV surplus (start, or hold while still exporting) > idle
 
 Runs are started and held with a setpoint just above the room, because tado modulates
 on that gap (small gap = low compressor speed = higher COP). While the current setpoint
@@ -48,7 +48,7 @@ class Target:
 
 def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_now: bool,
                     enabled: bool = True, settings: ArbiterSettings | None = None,
-                    current_setpoint: float | None = None) -> Target:
+                    current_setpoint: float | None = None, bedroom_call: bool = False) -> Target:
     s = settings or ArbiterSettings()
     if not enabled:
         return Target(None, "off", "EMS switched off: the thermostat schedule leads")
@@ -76,6 +76,11 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
         return Target(start, "floor", evaluation.reason)
     if evaluation.advice == "keep_running":
         return Target(hold, "keep_running", "hold the run until the minimum run time")
+    if bedroom_call:
+        # warm water only reaches the bedrooms while the living room asks for heat
+        if running:
+            return Target(hold, "bedroom", "bedroom below target before bedtime: keep the run going")
+        return Target(start, "bedroom", "bedroom below target before bedtime: short run")
     if plan_run_now:
         if running:
             return Target(hold, "planner", "planned run in progress")
