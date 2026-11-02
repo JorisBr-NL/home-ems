@@ -28,8 +28,7 @@ OPT_FLOOR_RULE_BAND = "floor_rule_band"
 OPT_FLOOR_MIN_MARGIN = "floor_min_margin"
 OPT_PV_RUN_THRESHOLD = "pv_run_threshold_w"
 OPT_MIN_RUN = "min_run_minutes"
-OPT_PEAK_START = "peak_start"
-OPT_PEAK_END = "peak_end"
+OPT_EXPENSIVE_SHARE = "expensive_share_pct"  # % most expensive quarters of the day = price peak
 OPT_MAX_GAP = "max_gap_hours"
 OPT_BASE_LOAD = "base_load_kw"
 
@@ -39,8 +38,7 @@ OPTION_DEFAULTS = {
     OPT_FLOOR_MIN_MARGIN: 0.0,
     OPT_PV_RUN_THRESHOLD: 700,
     OPT_MIN_RUN: 30,
-    OPT_PEAK_START: "17:30:00",
-    OPT_PEAK_END: "20:00:00",
+    OPT_EXPENSIVE_SHARE: 25,
     OPT_MAX_GAP: 8,
     OPT_BASE_LOAD: 0.4,
 }

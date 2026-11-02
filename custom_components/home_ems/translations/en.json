@@ -25,11 +25,11 @@
       "heat_pump_running": {
         "name": "Heat pump running"
       },
-      "peak_window": {
-        "name": "Evening peak window"
-      },
       "plan_run_now": {
         "name": "Planned run now"
+      },
+      "price_peak": {
+        "name": "Price peak"
       }
     },
     "sensor": {
@@ -134,8 +134,7 @@
           "floor_min_margin": "Minimum floor margin (flowmeter − living room)",
           "pv_run_threshold_w": "Solar surplus for a run",
           "min_run_minutes": "Minimum run time",
-          "peak_start": "Evening peak from",
-          "peak_end": "Evening peak until",
+          "expensive_share_pct": "Price peak: most expensive share of the day",
           "max_gap_hours": "Longest time without a run (planner)",
           "base_load_kw": "House base load besides the heat pump (planner)"
         }

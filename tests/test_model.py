@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 # Load model.py directly so the tests do not import the HA-dependent package __init__.
 _PATH = Path(__file__).parents[1] / "custom_components" / "home_ems" / "model.py"
@@ -16,10 +17,14 @@ _SPEC.loader.exec_module(model)
 Advice, Inputs, RunTracker, evaluate = model.Advice, model.Inputs, model.RunTracker, model.evaluate
 
 DAY = datetime(2026, 10, 24)
+CET = ZoneInfo("Europe/Amsterdam")
 
 
-def inputs(power=5.0, flow=21.0, living=19.5, grid=300.0):
-    return Inputs(heat_pump_power_w=power, flow_temp=flow, living_temp=living, grid_power_w=grid)
+def inputs(power=5.0, flow=21.0, living=19.5, grid=300.0, price=None):
+    # a day with a morning and an evening price peak; `price` is the current quarter
+    day = (0.20,) * 72 + (0.40,) * 24 if price is not None else ()
+    return Inputs(heat_pump_power_w=power, flow_temp=flow, living_temp=living, grid_power_w=grid,
+                  price_now=price, day_prices=day)
 
 
 def at(hour, minute=0):
@@ -70,7 +75,7 @@ def test_floor_rule_applies_just_below_comfort_band():
 
 
 def test_no_peak_floor_run_when_living_room_warm():
-    result = evaluate(inputs(flow=18.6, living=19.6), RunTracker(), at(18))
+    result = evaluate(inputs(flow=18.2, living=19.6, price=0.40), RunTracker(), at(18))
     assert result.advice is Advice.WAIT
 
 
@@ -85,10 +90,59 @@ def test_no_pv_run_when_floor_full():
     assert result.advice is Advice.WAIT
 
 
-def test_peak_window_waits_unless_floor_far_below():
+def test_price_peak_waits_unless_floor_far_below():
     tracker = RunTracker()
-    assert evaluate(inputs(flow=19.0, living=19.3), tracker, at(18)).advice is Advice.WAIT
-    assert evaluate(inputs(flow=18.2, living=19.3), tracker, at(18, 5)).advice is Advice.RUN
+    result = evaluate(inputs(flow=19.0, living=19.3, price=0.40), tracker, at(8))
+    assert result.advice is Advice.WAIT and result.in_peak and "price peak" in result.reason
+    assert evaluate(inputs(flow=18.2, living=19.3, price=0.40), tracker, at(8, 5)).advice is Advice.RUN
+
+
+def test_no_fixed_evening_window():
+    # 18:00 at a normal price is no peak: the floor rule applies as at any other time
+    result = evaluate(inputs(flow=19.0, living=19.3, price=0.22), RunTracker(), at(18))
+    assert not result.in_peak and result.advice is Advice.RUN
+
+
+def test_is_expensive_takes_the_top_share_of_the_day():
+    day = (0.20,) * 60 + (0.40,) * 8 + (0.30,) * 28   # 96 quarters, top 25% = 24 quarters
+    assert model.is_expensive(0.40, day, 0.25)
+    assert model.is_expensive(0.30, day, 0.25)        # the 24th most expensive is 0.30
+    assert not model.is_expensive(0.20, day, 0.25)
+    assert not model.is_expensive(0.40, day, 0.0)     # share 0 = never a peak
+    assert not model.is_expensive(None, day, 0.25) and not model.is_expensive(0.40, (), 0.25)
+
+
+def quarter_rows(day, prices):
+    """Jeroen.nl-style rows (`today` attribute), UTC start times, for a local day in CET."""
+    first = datetime(day.year, day.month, day.day, tzinfo=timezone.utc) - timedelta(hours=1)
+    return [{"start": (first + i * timedelta(minutes=15)).isoformat(), "price": p}
+            for i, p in enumerate(prices)]
+
+
+def test_price_peak_ranks_the_whole_day_not_what_is_left():
+    # Nov 2026 (CET): morning and evening peak at 0.40, rest 0.20; at 23:30 only two
+    # cheap quarters are left, which must not count as a peak
+    day = [0.20] * 96
+    day[28:36] = [0.40] * 8      # 07:00-09:00
+    day[68:84] = [0.40] * 16     # 17:00-21:00
+    rows = quarter_rows(datetime(2026, 11, 2), day)
+    rows += quarter_rows(datetime(2026, 11, 3), [0.90] * 96)    # tomorrow is left out
+    late = datetime(2026, 11, 2, 23, 30, tzinfo=CET)
+    price_now, prices = model.prices_today(rows, late)
+    assert price_now == 0.20 and len(prices) == 96
+    assert not model.is_expensive(price_now, prices, 0.25)
+    # only the rest of the day (the old behaviour) would have made it a peak
+    assert model.is_expensive(price_now, prices[-2:], 0.25)
+    evening = datetime(2026, 11, 2, 18, 0, tzinfo=CET)
+    assert model.is_expensive(*model.prices_today(rows, evening), 0.25)
+
+
+def test_prices_today_skips_bad_rows():
+    rows = [{"start": "2026-11-02T10:00:00+00:00", "price": "x"}, {"price": 0.3},
+            {"start": "2026-11-02T10:00:00", "price": 0.3},             # no time zone
+            {"start": "2026-11-02T10:00:00+00:00", "price": 0.25}]
+    assert model.prices_today(rows, datetime(2026, 11, 2, 11, 5, tzinfo=CET)) == (0.25, (0.25,))
+    assert model.prices_today([], datetime(2026, 11, 2, 11, 5, tzinfo=CET)) == (None, ())
 
 
 def test_keep_running_until_minimum_then_running():

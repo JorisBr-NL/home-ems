@@ -5,8 +5,9 @@ to devices.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
@@ -41,8 +42,9 @@ class Settings:
     # the gap between setpoint and room, so a small gap keeps the compressor at low
     # speed with a clearly higher COP than a large step.
     run_setpoint_offset: float = 0.2
-    peak_start: time = time(17, 30)
-    peak_end: time = time(20, 0)
+    # Price peak: a quarter among this share of the most expensive quarters of the day.
+    # Follows the real morning and evening peaks instead of a fixed window.
+    expensive_share: float = 0.25
     # Gaps between evaluations longer than this (HA restart, outage) are not counted.
     max_step: timedelta = timedelta(minutes=5)
     # After a restart shorter than this, an ongoing run keeps its stored start time.
@@ -57,6 +59,8 @@ class Inputs:
     flow_temp: float | None
     living_temp: float | None
     grid_power_w: float | None  # positive = import, negative = export
+    price_now: float | None = None          # all-in price of the current quarter
+    day_prices: tuple[float, ...] = ()      # all known quarter prices of today
 
 
 @dataclass
@@ -194,8 +198,32 @@ def is_running(inputs: Inputs, settings: Settings) -> bool | None:
     return inputs.heat_pump_power_w > settings.running_threshold_w
 
 
-def in_peak_window(now: datetime, settings: Settings) -> bool:
-    return settings.peak_start <= now.time() < settings.peak_end
+def prices_today(rows: list[dict], now: datetime) -> tuple[float | None, tuple[float, ...]]:
+    """Price of the current quarter and all quarter prices of today (the local day of
+    `now`, an aware datetime). `rows` must cover the whole day, including quarters that
+    are already over (the `today` attribute of the Jeroen.nl price sensor, not
+    `prices`, which starts at now): otherwise the peak shifts to whatever is left."""
+    day: list[tuple[datetime, float]] = []
+    for row in rows or []:
+        try:
+            start = datetime.fromisoformat(str(row["start"]))
+            price = float(row["price"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if start.tzinfo is not None and start.astimezone(now.tzinfo).date() == now.date():
+            day.append((start, price))
+    day.sort()
+    current = [p for s, p in day if s <= now < s + timedelta(minutes=15)]
+    return (current[-1] if current else None), tuple(p for _, p in day)
+
+
+def is_expensive(price_now: float | None, day_prices: tuple[float, ...], share: float) -> bool:
+    """True when the current price is among the `share` most expensive quarters of today."""
+    if price_now is None or not day_prices or share <= 0:
+        return False
+    ranked = sorted(day_prices, reverse=True)
+    threshold = ranked[min(len(ranked), math.ceil(len(ranked) * share)) - 1]
+    return price_now >= threshold
 
 
 def evaluate(inputs: Inputs, tracker: RunTracker, now: datetime,
@@ -211,7 +239,7 @@ def evaluate(inputs: Inputs, tracker: RunTracker, now: datetime,
     surplus = (
         max(0.0, -inputs.grid_power_w) if inputs.grid_power_w is not None else None
     )
-    peak = in_peak_window(now, settings)
+    peak = is_expensive(inputs.price_now, inputs.day_prices, settings.expensive_share)
 
     def result(advice: Advice, reason: str) -> Evaluation:
         hint = (
@@ -251,8 +279,8 @@ def _decide(running, floor_margin, living_temp, surplus, peak, tracker, now, set
             and floor_margin < settings.floor_min_margin - 1.0
             and not room_warm
         ):
-            return result(Advice.RUN, "floor far below limit during peak")
-        return result(Advice.WAIT, "evening peak: avoid starting")
+            return result(Advice.RUN, "floor far below limit during price peak")
+        return result(Advice.WAIT, "price peak: avoid starting")
 
     if floor_low and not room_warm:
         return result(Advice.RUN, "floor below minimum margin")

@@ -6,7 +6,7 @@ Eigen energiemanagementsysteem voor Home Assistant: stuurt (straks) de Quatt-war
 
 Het ontwerp staat in Obsidian (`Projects/Energie/EMS ontwerp.md`); de analyse waarop de standaardwaarden zijn gebaseerd in `Projects/Energie/Analyse runs en flowmeter.md`.
 
-## Status: versie 0.4.4 – observatiemodus
+## Status: versie 0.4.5 – observatiemodus
 
 Home EMS leest sensoren uit en laat zien wat het **zou** doen. Het schrijft niets naar apparaten; je bestaande automatiseringen blijven leidend.
 
@@ -14,12 +14,12 @@ Home EMS leest sensoren uit en laat zien wat het **zou** doen. Het schrijft niet
 |---|---|
 | `sensor.home_ems_advice` | `run`, `keep_running`, `running`, `wait` of `unknown`, met de reden als attribuut; bij `run` ook `setpoint_hint` (woonkamer + 0,2 °C) |
 | `binary_sensor.home_ems_heat_pump_running` | warmtepomp draait (vermogen > 100 W) |
-| `binary_sensor.home_ems_peak_window` | binnen het avondvenster 17:30–20:00 |
+| `binary_sensor.home_ems_price_peak` | het huidige kwartier hoort bij de duurste 25% van de dag (ochtend- of avondpiek; sinds v0.4.5, daarvoor het vaste avondvenster `peak_window`) |
 | `sensor.home_ems_floor_margin` | flowmetertemperatuur min woonkamertemperatuur (K), alleen als de warmtepomp stilstaat |
 | `sensor.home_ems_pv_surplus` | teruglevering op dit moment (W) |
 | `sensor.home_ems_runs_today` / `short_runs_today` | aantal runs en runs korter dan 30 min vandaag |
 
-Advieslogica: buiten het avondvenster een run als de vloermarge onder 0 K komt (het vloerwater kouder dan de woonkamer; sinds v0.4.4, daarvoor 0,5 K) **en de woonkamer onder 19,5 °C is** (comfortsetpoint 19,0 °C + 0,5 °C, sinds v0.2.1), of bij ≥ 700 W PV-overschot zolang de vloermarge onder 3 K ligt; een lopende run korter dan 30 min hoort door te lopen. Een run start je het zuinigst met een setpoint net boven de woonkamer (`setpoint_hint`): tado laat de warmtepomp dan op laag toerental draaien, met een hogere COP dan bij een grote stap. Bij een eerder opgeslagen instelling blijft de oude minimale vloermarge staan; pas die aan onder *Configureren → Planner en advies*.
+Advieslogica: buiten een prijspiek een run als de vloermarge onder 0 K komt (het vloerwater kouder dan de woonkamer; sinds v0.4.4, daarvoor 0,5 K) **en de woonkamer onder 19,5 °C is** (comfortsetpoint 19,0 °C + 0,5 °C, sinds v0.2.1), of bij ≥ 700 W PV-overschot zolang de vloermarge onder 3 K ligt; een lopende run korter dan 30 min hoort door te lopen. In een prijspiek (de duurste kwartieren van de dag volgens de prijssensor, instelbaar onder *Configureren*) adviseert Home EMS geen start, behalve als de vloermarge meer dan 1 K onder de grens zakt. Zonder prijsdata is er geen piek. Een run start je het zuinigst met een setpoint net boven de woonkamer (`setpoint_hint`): tado laat de warmtepomp dan op laag toerental draaien, met een hogere COP dan bij een grote stap. Bij een eerder opgeslagen instelling blijft de oude minimale vloermarge staan; pas die aan onder *Configureren → Planner en advies*.
 
 ### Advies vergelijken met de werkelijkheid (v0.2)
 
@@ -40,8 +40,8 @@ De planner rekent uit hoeveel warmte het huis tot het einde van de prijsdata (ma
 - **Warmtevraag:** graaduren uit de temperatuurverwachting × 0,217 kWh, min 5,3 kWh per dag (model uit de data van 14–23 okt 2026). Eén run-uur levert ~2,9 kW warmte.
 - **Kosten per kWh warmte** per kwartier: de stroomprijs (of, bij PV-overschot boven het basisverbruik, de gemiste terugleververgoeding = marktprijs), gedeeld door de COP bij de buitentemperatuur (COP ≈ 3,5 + 0,15 × T, tussen 2,5 en 7).
 - **Comfort:** runs van minimaal een uur, en nooit langer dan de ingestelde tijd (standaard 8 uur) zonder run. In de zomer, zonder warmtevraag, wordt er niets gepland.
-- **Avondpiek:** kwartieren in het avondpiekvenster (standaard 17:30–20:00) krijgen bij het kiezen € 0,05 per kWh warmte extra, zodat runs daar alleen vallen als het echt niet anders kan. In de verwachte kosten telt alleen de echte prijs.
-- **Databronnen** (in te stellen via *Configureren*): de stroomprijssensor van [Jeroen.nl](https://github.com/JorisBr-NL/ha-jeroen-nl) (attribuut `prices`, inclusief de prijsvoorspelling), de opwekvoorspelling van Jeroen.nl (attribuut `hours`) en een weerentiteit met een verwachting per uur. Zonder weerentiteit gebruikt de planner de huidige buitentemperatuur.
+- **Pieken:** geen vast venster meer (sinds v0.4.5). De prijs per kwartier bevat de ochtend- en avondpiek al, dus de goedkoopste blokken vermijden die vanzelf; een goedkope avond wordt gewoon gebruikt.
+- **Databronnen** (in te stellen via *Configureren*): de stroomprijssensor van [Jeroen.nl](https://github.com/JorisBr-NL/ha-jeroen-nl) (attribuut `prices`, inclusief de prijsvoorspelling; voor de prijspiek in het advies het attribuut `today`, alle kwartieren van vandaag), de opwekvoorspelling van Jeroen.nl (attribuut `hours`) en een weerentiteit met een verwachting per uur. Zonder weerentiteit gebruikt de planner de huidige buitentemperatuur.
 
 | Entiteit | Betekenis |
 |---|---|
@@ -169,7 +169,7 @@ Het plan (paars) loopt vanaf nu; wat er eerder gebeurde, zie je aan de grijze bl
 
 ### Instellingen (v0.3, v0.4)
 
-Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kies je *Planner en advies* of *Energie- en kostenoverzicht*. Onder het eerste: de databronnen hierboven, comfortsetpoint, de band voor de vloerregel, minimale vloermarge, PV-overschot voor een run, minimale runtijd, het avondpiekvenster, de langste tijd zonder run en het basisverbruik van het huis. Wijzigingen gelden direct.
+Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kies je *Planner en advies* of *Energie- en kostenoverzicht*. Onder het eerste: de databronnen hierboven, comfortsetpoint, de band voor de vloerregel, minimale vloermarge, PV-overschot voor een run, minimale runtijd, het deel van de dag dat als prijspiek telt (standaard 25%), de langste tijd zonder run en het basisverbruik van het huis. Wijzigingen gelden direct.
 
 ### Energie- en kostenoverzicht (v0.4)
 
