@@ -86,6 +86,7 @@ class Contract:
     fixed_per_day: float = 0.0     # supplier + grid operator - energy tax reduction, per day
     dynamic: bool = False          # prices above are then only expectations for the forecast
     monthly_discount: float = 0.0  # EUR per month off the bill (e.g. a welcome discount)
+    calendar_years: bool = False   # years end on 31 Dec (monthly billing) instead of on the anniversary
 
 
 @dataclass(frozen=True)
@@ -154,6 +155,14 @@ def _manual_usage(span: tuple[date, date], v: dict) -> Usage:
     )
 
 
+def _calendar(value) -> bool:
+    """`jaren: kalender` or `jaren: contract` (the default)."""
+    text = str(value).strip().lower()
+    if text not in ("kalender", "contract"):
+        raise ValueError(f"jaren must be 'kalender' or 'contract', not {value!r}")
+    return text == "kalender"
+
+
 def parse_settings(raw: dict | None) -> CostSettings:
     """Settings from the YAML in the options (Dutch keys). Raises ValueError on bad input."""
     raw = raw or {}
@@ -166,6 +175,7 @@ def parse_settings(raw: dict | None) -> CostSettings:
                 import_price=float(c.get("stroom", 0)), export_price=float(c.get("teruglevering", 0)),
                 gas_price=float(c.get("gas", 0)), fixed_per_day=float(c.get("vast_per_dag", 0)),
                 monthly_discount=float(c.get("korting_per_maand", 0)),
+                calendar_years=_calendar(c.get("jaren", "contract")),
                 dynamic=bool(c.get("dynamisch", False)),
             ) for c in raw.get("contracten") or []), key=lambda c: c.start))
         advances = tuple(Period(_date(a["vanaf"]), None, float(a["bedrag"]))
@@ -426,6 +436,7 @@ class MonthRow:
     advance: float
     first_day: int = 1   # rows of a month split by a contract change cover only part of it
     last_day: int = 0    # 0 = until the end of the month
+    net_metering: bool = True  # the whole row falls under net metering
 
     @property
     def partial(self) -> bool:
@@ -529,15 +540,19 @@ def settlement_years(s: CostSettings, until: date) -> list[tuple[date, date, str
     """(start, end, contract name) per settlement year up to the one containing `until`.
 
     A contract runs to the day before the next one; a contract longer than a year
-    (or the last one) is cut into years from its start date. A remainder of up to a
-    month is added to the last year instead of becoming a year of its own."""
+    (or the last one) is cut into years from its start date, or into calendar years
+    with `jaren: kalender` (the first year then ends on 31 December). A remainder of
+    up to a month is added to the last year instead of becoming a year of its own."""
     out = []
     contracts = list(s.contracts)
     for i, c in enumerate(contracts):
         stop = contracts[i + 1].start - timedelta(days=1) if i + 1 < len(contracts) else None
         start = c.start
         while start <= until and (stop is None or start <= stop):
-            nxt = start.replace(year=start.year + 1) - timedelta(days=1)
+            if c.calendar_years:
+                nxt = date(start.year, 12, 31)
+            else:
+                nxt = start.replace(year=start.year + 1) - timedelta(days=1)
             if stop is not None and (nxt >= stop or (stop - nxt).days <= 31):
                 nxt = stop
             out.append((start, nxt, c.name))
@@ -593,7 +608,7 @@ def build_overview(days: dict[date, Usage], today: date, s: CostSettings) -> lis
             month_end = m + timedelta(days=n - 1)
             advance = s.advance(m) if last == month_end else 0.0
             rows.append(MonthRow(m, status, usage, costs, advance, first.day,
-                                 0 if last == month_end else last.day))
+                                 0 if last == month_end else last.day, last <= s.net_metering_until))
             m = add_months(m, 1)
         rows = _net_metering_surplus(rows, s)
         if rows:
@@ -602,38 +617,64 @@ def build_overview(days: dict[date, Usage], today: date, s: CostSettings) -> lis
     return years
 
 
-CSV_COLUMNS = (
-    ("Maand", "month"), ("Dagen", "days"), ("Status", "status"), ("Gas m3", "gas_m3"), ("Opwek kWh", "pv_kwh"),
-    ("Teruglevering kWh", "export_kwh"), ("Afname kWh", "import_kwh"), ("Afname - teruglevering", "net_kwh"),
-    ("Verbruik totaal kWh", "total_kwh"), ("Algemeen kWh", "general_kwh"), ("Warmtepomp kWh", "heat_pump_kwh"),
-    ("Laadpaal kWh", "ev_kwh"), ("Eigen verbruik %", "own_use_pct"), ("Buitentemp gem", "mean_temp"),
-    ("Vaste kosten", "fixed"), ("Gas EUR", "gas_cost"), ("Stroom EUR", "power_cost"),
-    ("Retour laadpaal", "ev_refund"), ("Totaal", "total"), ("Voorschot", "advance"),
-    ("Cum totaal", "cum_total"), ("Cum voorschot", "cum_advance"),
+MONTHS_NL = ("jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec")
+STATUS_NL = {"actual": "werkelijk", "running": "lopend", "forecast": "verwachting"}
+
+
+def _num(v: float | None, decimals: int) -> str:
+    return "" if v is None else f"{v:.{decimals}f}".replace(".", ",")
+
+
+def _label(r: MonthRow) -> str:
+    text = f"{MONTHS_NL[r.month.month - 1]} {r.month.year}"
+    return f"{text} ({r.first_day}-{r.last_day or month_days(r.month)})" if r.partial else text
+
+
+def _days(r: MonthRow) -> int:
+    return (r.last_day or month_days(r.month)) - r.first_day + 1
+
+
+# Same columns and order as the monthly tab of the workbook, so a row can be pasted as is.
+EXPORT_COLUMNS = (
+    ("Maand", lambda r, c: _label(r)),
+    ("Dagen", lambda r, c: str(_days(r))),
+    ("Status", lambda r, c: STATUS_NL.get(r.status, r.status)),
+    ("Buitentemp gem °C", lambda r, c: _num(r.usage.mean_temp, 1)),
+    ("Gas m³", lambda r, c: _num(r.usage.gas_m3, 1)),
+    ("Opwek kWh", lambda r, c: _num(r.usage.pv_kwh, 0)),
+    ("Teruglevering kWh", lambda r, c: _num(r.usage.export_kwh, 0)),
+    ("Afname kWh", lambda r, c: _num(r.usage.import_kwh, 0)),
+    ("Afname − teruglevering", lambda r, c: _num(r.usage.import_kwh - r.usage.export_kwh, 0)),
+    ("Verbruik totaal kWh", lambda r, c: _num(r.usage.total_kwh, 0)),
+    ("Warmtepomp kWh", lambda r, c: _num(r.usage.hp_kwh, 0)),
+    ("Laadpaal kWh", lambda r, c: _num(r.usage.ev_kwh, 0)),
+    ("Algemeen kWh", lambda r, c: _num(r.usage.general_kwh, 0)),
+    ("Eigen verbruik %", lambda r, c: (f"{max(0.0, (r.usage.pv_kwh - r.usage.export_kwh) / r.usage.pv_kwh):.0%}"
+                                       if r.usage.pv_kwh > 0 else "")),
+    ("Saldering (ja/nee)", lambda r, c: "ja" if r.net_metering else "nee"),
+    ("Vaste kosten", lambda r, c: _num(r.costs.fixed, 2)),
+    ("Gas €", lambda r, c: _num(r.costs.gas, 2)),
+    ("Stroom €", lambda r, c: _num(r.costs.power, 2)),
+    ("Totaal €", lambda r, c: _num(r.costs.total, 2)),
+    ("Voorschot €", lambda r, c: _num(r.advance, 2)),
+    ("Cum totaal €", lambda r, c: _num(c[0], 2)),
+    ("Cum voorschot €", lambda r, c: _num(c[1], 2)),
+    ("Vergoeding laadpaal €/kWh", lambda r, c: _num(-r.costs.ev_refund / r.usage.ev_kwh
+                                                     if r.usage.ev_kwh > 0 else 0.0, 4)),
+    ("Retour laadpaal € (apart)", lambda r, c: _num(r.costs.ev_refund, 2)),
 )
 
 
-def to_csv(summary: YearSummary) -> str:
-    """Semicolon separated with a decimal comma, so Dutch Excel opens it directly."""
-    def cell(v) -> str:
-        if v is None:
-            return ""
-        if isinstance(v, float):
-            return f"{v:.2f}".replace(".", ",")
-        return str(v)
-
-    data = summary.as_dict()
-    lines = [";".join(h for h, _ in CSV_COLUMNS)]
-    lines += [";".join(cell(m.get(k)) for _, k in CSV_COLUMNS) for m in data["months"]]
-    lines.append("")
-    for label, key in (("Eigen verbruik %", "own_use_pct"), ("Voorschotten", "advances"),
-                       ("Totale kosten (rekening leverancier)", "costs"),
-                       ("Verwachte afrekening (+ bijbetalen)", "expected_settlement"),
-                       ("Volgens afrekening", "settlement"),
-                       ("Cashback (apart uitbetaald)", "cashback"),
-                       ("Retour laadpaal (apart uitbetaald)", "ev_refund"),
-                       ("Netto kosten (na cashback en retour laadpaal)", "net_costs")):
-        lines.append(f"{label};{cell(data.get(key))}")
+def export_csv(years: list[YearSummary]) -> str:
+    """All months of all settlement years, oldest first, in the column order of the
+    workbook. Semicolon separated with a decimal comma, so Dutch Excel opens it
+    directly. The cumulative columns restart with every settlement year."""
+    lines = [";".join(h for h, _ in EXPORT_COLUMNS)]
+    for y in years:
+        cum = [0.0, 0.0]
+        for r in y.rows:
+            cum = [cum[0] + r.costs.total, cum[1] + r.advance]
+            lines.append(";".join(fn(r, cum) for _, fn in EXPORT_COLUMNS))
     return "\n".join(lines) + "\n"
 
 
@@ -655,4 +696,4 @@ def years_csv(years: list[YearSummary]) -> str:
 
 
 __all__ = ["settlement_years", "clean_daily", "apply_manual", "Usage", "Contract", "Period", "CostSettings", "parse_settings", "Costs", "day_costs",
-           "Forecaster", "MonthRow", "YearSummary", "build_overview", "to_csv", "years_csv", "replace"]
+           "Forecaster", "MonthRow", "YearSummary", "build_overview", "export_csv", "years_csv", "replace"]

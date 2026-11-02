@@ -6,20 +6,20 @@ Eigen energiemanagementsysteem voor Home Assistant: stuurt (straks) de Quatt-war
 
 Het ontwerp staat in Obsidian (`Projects/Energie/EMS ontwerp.md`); de analyse waarop de standaardwaarden zijn gebaseerd in `Projects/Energie/Analyse runs en flowmeter.md`.
 
-## Status: versie 0.4.3 – observatiemodus
+## Status: versie 0.4.4 – observatiemodus
 
 Home EMS leest sensoren uit en laat zien wat het **zou** doen. Het schrijft niets naar apparaten; je bestaande automatiseringen blijven leidend.
 
 | Entiteit | Betekenis |
 |---|---|
-| `sensor.home_ems_advice` | `run`, `keep_running`, `running`, `wait` of `unknown`, met de reden als attribuut |
+| `sensor.home_ems_advice` | `run`, `keep_running`, `running`, `wait` of `unknown`, met de reden als attribuut; bij `run` ook `setpoint_hint` (woonkamer + 0,2 °C) |
 | `binary_sensor.home_ems_heat_pump_running` | warmtepomp draait (vermogen > 100 W) |
 | `binary_sensor.home_ems_peak_window` | binnen het avondvenster 17:30–20:00 |
 | `sensor.home_ems_floor_margin` | flowmetertemperatuur min woonkamertemperatuur (K), alleen als de warmtepomp stilstaat |
 | `sensor.home_ems_pv_surplus` | teruglevering op dit moment (W) |
 | `sensor.home_ems_runs_today` / `short_runs_today` | aantal runs en runs korter dan 30 min vandaag |
 
-Advieslogica: buiten het avondvenster een run als de vloermarge onder 0,5 K komt **en de woonkamer onder 19,5 °C is** (comfortsetpoint 19,0 °C + 0,5 °C, sinds v0.2.1), of bij ≥ 700 W PV-overschot zolang de vloermarge onder 3 K ligt; een lopende run korter dan 30 min hoort door te lopen.
+Advieslogica: buiten het avondvenster een run als de vloermarge onder 0 K komt (het vloerwater kouder dan de woonkamer; sinds v0.4.4, daarvoor 0,5 K) **en de woonkamer onder 19,5 °C is** (comfortsetpoint 19,0 °C + 0,5 °C, sinds v0.2.1), of bij ≥ 700 W PV-overschot zolang de vloermarge onder 3 K ligt; een lopende run korter dan 30 min hoort door te lopen. Een run start je het zuinigst met een setpoint net boven de woonkamer (`setpoint_hint`): tado laat de warmtepomp dan op laag toerental draaien, met een hogere COP dan bij een grote stap. Bij een eerder opgeslagen instelling blijft de oude minimale vloermarge staan; pas die aan onder *Configureren → Planner en advies*.
 
 ### Advies vergelijken met de werkelijkheid (v0.2)
 
@@ -173,7 +173,7 @@ Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kie
 
 ### Energie- en kostenoverzicht (v0.4)
 
-Vervangt een zelf bijgehouden Excel-overzicht. Home EMS leest elk uur de langetermijnstatistieken van HA (per dag) en maakt per maand en per **contractjaar** (zoals op de jaarafrekening: van de startdatum van een contract tot de dag voor het volgende contract, of per jaar vanaf de startdatum; een maand waarin het contract wisselt, wordt gesplitst):
+Vervangt een zelf bijgehouden Excel-overzicht. Home EMS leest elk uur de langetermijnstatistieken van HA (per dag) en maakt per maand en per **contractjaar** (zoals op de jaarafrekening: van de startdatum van een contract tot de dag voor het volgende contract, of per jaar vanaf de startdatum; met `jaren: kalender` bij een contract per kalenderjaar, handig bij maandelijkse facturering; een maand waarin het contract wisselt, wordt gesplitst):
 
 - **meten:** gas, opwek, teruglevering, afname, afname − teruglevering, verbruik totaal / algemeen / warmtepomp / laadpaal, eigen verbruik % (= (opwek − teruglevering) / opwek), gemiddelde buitentemperatuur;
 - **kosten:** vaste kosten, gas, stroom, totaal, voorschot, cumulatief totaal en voorschot, verwachte eindafrekening; apart uitbetaald: cashback en laadpaalvergoeding, en de netto kosten daarna;
@@ -196,7 +196,11 @@ De entity-id's volgen de taal van HA bij het aanmaken (in het Nederlands bijvoor
 
 **Handmatige perioden:** voor maanden van vóór de HA-statistieken (of met foute statistieken) vul je onder `handmatig` de cijfers zelf in, per maand of per periode. Die vervangen de statistieken van die dagen. `temp` (gemiddelde buitentemperatuur) helpt de voorspelling van warmtepomp en gas.
 
-**CSV:** als er een map is ingesteld (standaard `/share/energie`), werkt Home EMS elk uur bij (alleen als de inhoud veranderd is, dus afgesloten jaren blijven ongemoeid) `energy_overzicht_JJJJ.csv` per jaar en `energy_overzicht_jaren.csv`, met puntkomma's en een decimale komma zodat Excel (NL) ze direct opent.
+**CSV:** als er een map is ingesteld (standaard `/share/energie`), werkt Home EMS elk uur twee bestanden bij (alleen als de inhoud veranderd is), met puntkomma's en een decimale komma zodat Excel (NL) ze direct opent:
+- `energy_overzicht_export.csv`: alle maanden van alle contractjaren, oudste eerst. De kolommen staan in de volgorde van een maandtabblad in Excel (Maand, Dagen, Status, Buitentemp gem °C, Gas m³, Opwek, Teruglevering, Afname, Afname − teruglevering, Verbruik totaal, Warmtepomp, Laadpaal, Algemeen, Eigen verbruik %, Saldering (ja/nee), Vaste kosten, Gas €, Stroom €, Totaal €, Voorschot €, Cum totaal €, Cum voorschot €, Vergoeding laadpaal €/kWh, Retour laadpaal €), zodat je een maand in één keer kunt overplakken. Status is *werkelijk*, *lopend* of *verwachting*; de cumulatieve kolommen beginnen elk contractjaar opnieuw.
+- `energy_overzicht_jaren.csv`: één regel per contractjaar met de totalen.
+
+Tot v0.4.4 heette het maandbestand `energy_overzicht_JJJJ.csv` (één per jaar); die oude bestanden worden niet meer bijgewerkt en kun je weggooien.
 
 **Instellen:** *Configureren* → *Energie- en kostenoverzicht*. Kies de sensoren (dezelfde als in het Energy-dashboard; voor de kostenvelden kun je ook een statistiek zonder sensor kiezen, zoals die van Tibber) en vul de contracten in als YAML:
 
@@ -218,6 +222,7 @@ contracten:
     gas: 1.25
     vast_per_dag: 0.70
     korting_per_maand: 10 # korting op de maandfactuur (wordt per dag verrekend in de vaste kosten)
+    jaren: kalender       # jaren tot 31 december in plaats van per contractjaar (standaard: contract)
 saldering_tot: 2026-12-31
 voorschotten:
   - vanaf: 2026-01-01
