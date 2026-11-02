@@ -18,8 +18,11 @@ Advice, Inputs, RunTracker, evaluate = model.Advice, model.Inputs, model.RunTrac
 DAY = datetime(2026, 10, 24)
 
 
-def inputs(power=5.0, flow=21.0, living=19.5, grid=300.0):
-    return Inputs(heat_pump_power_w=power, flow_temp=flow, living_temp=living, grid_power_w=grid)
+def inputs(power=5.0, flow=21.0, living=19.5, grid=300.0, price=None):
+    # a day with a morning and an evening price peak; `price` is the current quarter
+    day = (0.20,) * 72 + (0.40,) * 24 if price is not None else ()
+    return Inputs(heat_pump_power_w=power, flow_temp=flow, living_temp=living, grid_power_w=grid,
+                  price_now=price, day_prices=day)
 
 
 def at(hour, minute=0):
@@ -70,7 +73,7 @@ def test_floor_rule_applies_just_below_comfort_band():
 
 
 def test_no_peak_floor_run_when_living_room_warm():
-    result = evaluate(inputs(flow=18.6, living=19.6), RunTracker(), at(18))
+    result = evaluate(inputs(flow=18.2, living=19.6, price=0.40), RunTracker(), at(18))
     assert result.advice is Advice.WAIT
 
 
@@ -85,10 +88,26 @@ def test_no_pv_run_when_floor_full():
     assert result.advice is Advice.WAIT
 
 
-def test_peak_window_waits_unless_floor_far_below():
+def test_price_peak_waits_unless_floor_far_below():
     tracker = RunTracker()
-    assert evaluate(inputs(flow=19.0, living=19.3), tracker, at(18)).advice is Advice.WAIT
-    assert evaluate(inputs(flow=18.2, living=19.3), tracker, at(18, 5)).advice is Advice.RUN
+    result = evaluate(inputs(flow=19.0, living=19.3, price=0.40), tracker, at(8))
+    assert result.advice is Advice.WAIT and result.in_peak and "price peak" in result.reason
+    assert evaluate(inputs(flow=18.2, living=19.3, price=0.40), tracker, at(8, 5)).advice is Advice.RUN
+
+
+def test_no_fixed_evening_window():
+    # 18:00 at a normal price is no peak: the floor rule applies as at any other time
+    result = evaluate(inputs(flow=19.0, living=19.3, price=0.22), RunTracker(), at(18))
+    assert not result.in_peak and result.advice is Advice.RUN
+
+
+def test_is_expensive_takes_the_top_share_of_the_day():
+    day = (0.20,) * 60 + (0.40,) * 8 + (0.30,) * 28   # 96 quarters, top 25% = 24 quarters
+    assert model.is_expensive(0.40, day, 0.25)
+    assert model.is_expensive(0.30, day, 0.25)        # the 24th most expensive is 0.30
+    assert not model.is_expensive(0.20, day, 0.25)
+    assert not model.is_expensive(0.40, day, 0.0)     # share 0 = never a peak
+    assert not model.is_expensive(None, day, 0.25) and not model.is_expensive(0.40, (), 0.25)
 
 
 def test_keep_running_until_minimum_then_running():

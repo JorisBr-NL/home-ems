@@ -25,11 +25,11 @@
       "heat_pump_running": {
         "name": "Warmtepomp draait"
       },
-      "peak_window": {
-        "name": "Avondpiekvenster"
-      },
       "plan_run_now": {
         "name": "Run gepland nu"
+      },
+      "price_peak": {
+        "name": "Prijspiek"
       }
     },
     "sensor": {
@@ -134,8 +134,7 @@
           "floor_min_margin": "Minimale vloermarge (flowmeter − woonkamer)",
           "pv_run_threshold_w": "PV-overschot voor een run",
           "min_run_minutes": "Minimale runtijd",
-          "peak_start": "Avondpiek vanaf",
-          "peak_end": "Avondpiek tot",
+          "expensive_share_pct": "Prijspiek: duurste deel van de dag",
           "max_gap_hours": "Langste tijd zonder run (planner)",
           "base_load_kw": "Basisverbruik huis naast de warmtepomp (planner)"
         }

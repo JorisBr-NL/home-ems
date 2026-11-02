@@ -123,27 +123,26 @@ def test_build_slots_from_jeroen_attributes():
     assert planner.build_slots(rows[:1], None, None, fallback_temp=7.0)[0].temp == 7.0
 
 
-def test_peak_penalty_keeps_runs_out_of_the_evening_window():
-    # flat prices: without a penalty the earliest blocks win on ties; make 17:00-21:00 NL
-    # (16:00-20:00 UTC) slightly cheaper so they would be chosen without the penalty
-    prices = {h: 0.25 for h in range(24)} | {16: 0.24, 17: 0.24, 18: 0.24, 19: 0.24}
-    base = dict(horizon=timedelta(hours=24), max_gap=timedelta(hours=24))
-    slots = day(prices=prices, temp=16.0)  # small need: 2 run-hours
-    without = planner.plan(slots, T0, planner.PlannerSettings(peak_penalty=0.0, **base))
-    with_penalty = planner.plan(slots, T0, planner.PlannerSettings(**base))
-
-    def in_peak(run):
-        tz = planner.ZoneInfo("Europe/Amsterdam")
-        t, quarters = run.start, []
+def test_prices_keep_runs_out_of_morning_and_evening_peaks():
+    # no fixed window: the morning (06-08 UTC) and evening (16-19 UTC) peaks are in the prices
+    prices = {h: 0.22 for h in range(24)} | {6: 0.40, 7: 0.40, 16: 0.45, 17: 0.45, 18: 0.45}
+    s = planner.PlannerSettings(horizon=timedelta(hours=24), max_gap=timedelta(hours=24))
+    result = planner.plan(day(prices=prices, temp=8.0), T0, s)
+    assert result.runs
+    peak_hours = {6, 7, 16, 17, 18}
+    for run in result.runs:
+        t = run.start
         while t < run.end:
-            quarters.append(t.astimezone(tz).time())
+            assert t.hour not in peak_hours
             t += Q
-        return any(planner.time(17, 30) <= q < planner.time(20, 0) for q in quarters)
 
-    assert any(in_peak(r) for r in without.runs)
-    assert not any(in_peak(r) for r in with_penalty.runs)
-    # the penalty only steers the choice; the expected cost is the real price
-    assert with_penalty.expected_cost >= without.expected_cost
+
+def test_cheap_evening_is_used_without_fixed_window():
+    # 17:00-21:00 NL (16:00-20:00 UTC) cheapest of the day: the planner now uses it
+    prices = {h: 0.25 for h in range(24)} | {16: 0.18, 17: 0.18, 18: 0.18, 19: 0.18}
+    s = planner.PlannerSettings(horizon=timedelta(hours=24), max_gap=timedelta(hours=24))
+    result = planner.plan(day(prices=prices, temp=16.0), T0, s)
+    assert any(16 <= r.start.hour < 20 for r in result.runs)
 
 
 def test_next_run_and_running_now():

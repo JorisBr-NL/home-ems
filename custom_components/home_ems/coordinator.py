@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -28,14 +28,13 @@ from .const import (
     OPT_BASE_LOAD,
     OPT_COMFORT_SETPOINT,
     OPT_COST_SETTINGS,
+    OPT_EXPENSIVE_SHARE,
     OPT_EXPORT_DIR,
     OPT_FLOOR_MIN_MARGIN,
     OPT_FLOOR_RULE_BAND,
     OPT_MAX_GAP,
     OPT_MIN_RUN,
     OPT_OVERVIEW_FROM,
-    OPT_PEAK_END,
-    OPT_PEAK_START,
     OPT_PRICE_ENTITY,
     OPT_PV_RUN_THRESHOLD,
     OPT_SOLAR_ENTITY,
@@ -146,8 +145,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             min_run=timedelta(minutes=float(self.option(OPT_MIN_RUN))),
             floor_min_margin=float(self.option(OPT_FLOOR_MIN_MARGIN)),
             pv_run_threshold_w=float(self.option(OPT_PV_RUN_THRESHOLD)),
-            peak_start=time.fromisoformat(self.option(OPT_PEAK_START)),
-            peak_end=time.fromisoformat(self.option(OPT_PEAK_END)),
+            expensive_share=float(self.option(OPT_EXPENSIVE_SHARE)) / 100,
             comfort_setpoint=float(self.option(OPT_COMFORT_SETPOINT)),
             floor_rule_band=float(self.option(OPT_FLOOR_RULE_BAND)),
         )
@@ -156,8 +154,6 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         return PlannerSettings(
             base_load_kw=float(self.option(OPT_BASE_LOAD)),
             max_gap=timedelta(hours=float(self.option(OPT_MAX_GAP))),
-            peak_start=time.fromisoformat(self.option(OPT_PEAK_START)),
-            peak_end=time.fromisoformat(self.option(OPT_PEAK_END)),
             tz=dt_util.get_default_time_zone(),
         )
 
@@ -195,20 +191,40 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         known = [v for v in values if v is not None]
         return sum(known) if known else None
 
-    def read_inputs(self) -> Inputs:
+    def _prices_today(self, now: datetime) -> tuple[float | None, tuple[float, ...]]:
+        """Price of the current quarter and all known quarter prices of today, from the
+        `prices` attribute of the Jeroen.nl price sensor."""
+        state = self.hass.states.get(self.option(OPT_PRICE_ENTITY) or "")
+        rows = []
+        for row in (state.attributes.get("prices", []) if state else []):
+            start = dt_util.parse_datetime(str(row.get("start")))
+            try:
+                price = float(row["price"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if start is not None and dt_util.as_local(start).date() == now.date():
+                rows.append((start, price))
+        rows.sort()
+        current = [p for s, p in rows if s <= now < s + timedelta(minutes=15)]
+        return (current[-1] if current else None), tuple(p for _, p in rows)
+
+    def read_inputs(self, now: datetime) -> Inputs:
         data = self.config_entry.data
+        price_now, day_prices = self._prices_today(now)
         return Inputs(
             heat_pump_power_w=self._heat_pump_power(),
             flow_temp=self._float_state(data.get(CONF_FLOW_TEMPERATURE)),
             living_temp=self._climate_temperature(data.get(CONF_LIVING_CLIMATE)),
             grid_power_w=self._float_state(data.get(CONF_GRID_POWER)),
+            price_now=price_now,
+            day_prices=day_prices,
         )
 
     async def _async_update_data(self) -> Evaluation:
         now = dt_util.now()
         settings = self.settings()
         self.tracker.settings = settings
-        evaluation = evaluate(self.read_inputs(), self.tracker, now, settings)
+        evaluation = evaluate(self.read_inputs(now), self.tracker, now, settings)
         self._store.async_delay_save(self.tracker.to_dict, SAVE_DELAY)
         if self.plan is None or now - self.plan.made >= REPLAN_INTERVAL:
             await self._async_replan(now)

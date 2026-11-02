@@ -22,7 +22,7 @@ async def async_setup_entry(
     async_add_entities(
         [
             HeatPumpRunningSensor(coordinator, "heat_pump_running"),
-            PeakWindowSensor(coordinator, "peak_window"),
+            PricePeakSensor(coordinator, "price_peak"),
             PlanRunNowSensor(coordinator, "plan_run_now"),
         ]
     )
@@ -36,7 +36,9 @@ class HeatPumpRunningSensor(HomeEmsEntity, BinarySensorEntity):
         return self.coordinator.data.heat_pump_running
 
 
-class PeakWindowSensor(HomeEmsEntity, BinarySensorEntity):
+class PricePeakSensor(HomeEmsEntity, BinarySensorEntity):
+    """On during a quarter among the most expensive of the day (morning or evening peak)."""
+
     @property
     def is_on(self) -> bool:
         return self.coordinator.data.in_peak
