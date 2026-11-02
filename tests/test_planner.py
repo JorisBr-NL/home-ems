@@ -175,3 +175,29 @@ def test_max_gap_still_applies_when_stored_heat_covers_the_need():
     p = planner.plan(day(temp=14.0), T0, S, living_temp=21.0)
     assert p.heat_need_kwh == 0.0
     assert p.runs and all(r.reason == "max_gap" for r in p.runs)
+
+
+def test_gas_cost_per_kwh_heat():
+    s = planner.PlannerSettings(gas_price_m3=1.50)
+    assert planner.gas_heat_cost(s) == pytest.approx(1.50 / (9.77 * 0.9))
+    assert planner.gas_heat_cost(S) is None
+
+
+def test_no_runs_for_cost_where_gas_is_cheaper():
+    # frost and a very expensive evening: heat pump heat costs more than gas there
+    prices = {h: 0.25 for h in range(24)} | {h: 0.80 for h in range(16, 22)}
+    s = planner.PlannerSettings(horizon=timedelta(hours=24), gas_price_m3=1.50, max_gap=timedelta(hours=24))
+    p = planner.plan(day(prices, temp=-5.0), T0, s)
+    gas = planner.gas_heat_cost(s)
+    assert p.gas_cost_per_kwh_heat == pytest.approx(gas, abs=1e-4)
+    assert p.gas_cheaper_quarters == 24          # the six expensive hours
+    assert all(not (16 <= r.start.hour < 22) for r in p.runs)
+    without_gas = planner.plan(day(prices, temp=-5.0), T0, planner.PlannerSettings(
+        horizon=timedelta(hours=24), max_gap=timedelta(hours=24)))
+    assert without_gas.run_hours >= p.run_hours
+
+
+def test_all_dearer_than_gas_plans_nothing_for_cost_but_keeps_the_gap_rule():
+    s = planner.PlannerSettings(horizon=timedelta(hours=24), gas_price_m3=0.50)
+    p = planner.plan(day(temp=0.0), T0, s)
+    assert p.runs and all(r.reason == "max_gap" for r in p.runs)

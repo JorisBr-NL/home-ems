@@ -118,7 +118,7 @@ async def test_options_menu_has_control_and_keeps_other_screens(recorder_mock, h
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] is FlowResultType.MENU
-    assert result["menu_options"] == ["planner", "control", "bedrooms", "overview"]
+    assert result["menu_options"] == ["planner", "control", "bedrooms", "pv_appliances", "overview"]
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "control"})
     assert result["type"] is FlowResultType.FORM and result["step_id"] == "control"
     result = await hass.config_entries.options.async_configure(
@@ -142,3 +142,21 @@ async def test_bedroom_below_target_before_bedtime_asks_for_a_run(hass, freezer)
     assert rooms.attributes["rooms"][0]["setpoint"] == 17.0
     target = hass.states.get(TARGET)
     assert target.attributes["source"] == "bedroom" and float(target.state) == 19.2
+
+
+async def test_negative_price_shows_which_inverter_would_go_off(hass, freezer):
+    freezer.move_to("2027-05-01T11:05:00+00:00")
+    set_house(hass, flow=21.0, grid_w=-2500.0)     # exporting 2.5 kW
+    hass.states.async_set("sensor.inverter_a", "2000")
+    hass.states.async_set("sensor.inverter_b", "3000")
+    hass.states.async_set("sensor.price", "0.10", {
+        "today": [{"start": "2027-05-01T11:00:00+00:00", "price": 0.10, "market": -0.02}],
+        "prices": []})
+    entry = MockConfigEntry(domain=DOMAIN, title="Home EMS", data=DATA, unique_id=DOMAIN, options={
+        "price_entity": "sensor.price",
+        "pv_power_entities": ["sensor.inverter_a", "sensor.inverter_b"]})
+    await _setup(hass, entry)
+
+    curtail = hass.states.get("sensor.home_ems_pv_curtailment_inverters_off")
+    assert curtail.state == "1"
+    assert curtail.attributes["off"] == ["sensor.inverter_a"]

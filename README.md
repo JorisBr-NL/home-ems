@@ -6,7 +6,7 @@ Eigen energiemanagementsysteem voor Home Assistant: stuurt (straks) de Quatt-war
 
 Het ontwerp staat in Obsidian (`Projects/Energie/EMS ontwerp.md`); de analyse waarop de standaardwaarden zijn gebaseerd in `Projects/Energie/Analyse runs en flowmeter.md`.
 
-## Status: versie 0.7.0 – observatie- en schaduwmodus, sturing optioneel
+## Status: versie 0.8.0 – observatie- en schaduwmodus, sturing optioneel
 
 Home EMS leest sensoren uit en laat zien wat het **zou** doen, sinds v0.5 ook welk setpoint het in de woonkamer zou zetten. Sinds v0.6 kan het dat setpoint ook echt schrijven, maar alleen als je de schakelaar *Sturing* aanzet (standaard uit). Zolang die uit staat, schrijft Home EMS niets en blijven je bestaande automatiseringen leidend.
 
@@ -69,6 +69,27 @@ Instellen onder *Configureren → Slaapkamers*, als YAML:
 
 De slaapkamers worden nog niet geschreven; de sturing (v0.6) schrijft alleen de woonkamer.
 
+### Aftoppen en witgoed (v0.8, schaduwmodus)
+
+**PV aftoppen.** Met een dynamisch contract kost teruglevering bij een negatieve marktprijs geld. Staat elke omvormer achter een eigen schakelaar, dan kan Home EMS ze één voor één uitzetten. In schaduwmodus laat het zien wat het zou doen:
+
+- alleen bij een negatieve marktprijs (veld `market` van de prijssensor);
+- een omvormer gaat pas uit als hij **minder levert dan de teruglevering** op dat moment (anders koop je stroom in, en inkoop kost ook bij een negatieve prijs nog energiebelasting); de kleinste eerst; beide als de teruglevering groter is dan beide samen;
+- minstens 15 minuten uit, en terug aan zodra de prijs niet meer negatief is of na 4 uur.
+
+`sensor.home_ems_pv_curtailment_inverters_off`: aantal omvormers dat uit zou staan, met `off`, `reason`, en de vermeden teruglevering vandaag (`avoided_export_kwh_today`, `avoided_cost_eur_today`). Kies onder *Configureren → Aftoppen en witgoed* het vermogen per omvormer (W).
+
+**Witgoed.** Voor een vaatwasser of wasmachine achter een slimme stekker (machine laden, stekker uit; het programma loopt verder als de stroom terugkomt) berekent Home EMS de goedkoopste starttijd vóór de klaar-tijd, uit de prijs- en zonneverwachting:
+
+```yaml
+- naam: Vaatwasser
+  kwh: 1.1
+  duur: 2.5
+  klaar_voor: "07:00"
+```
+
+`sensor.home_ems_best_appliance_start`: beste starttijd van het eerste apparaat; attribuut `appliances` met per apparaat `start`, `end`, `deadline`, `cost`, `cost_now` (direct starten), `saving` en `pv_share`. De stekker wordt nog niet geschakeld.
+
 ### Sturing (v0.6)
 
 Met de schakelaar `switch.home_ems_control` (*Sturing (setpoint schrijven)*, standaard **uit**) schrijft Home EMS het gewenste setpoint naar de thermostaat in de woonkamer (`climate.set_temperature`).
@@ -107,6 +128,7 @@ De planner rekent uit hoeveel warmte het huis tot het einde van de prijsdata (ma
 
 - **Warmtevraag:** graaduren uit de temperatuurverwachting × 0,217 kWh, min 5,3 kWh per dag (model uit de data van 14–23 okt 2026). Eén run-uur levert ~2,9 kW warmte.
 - **Kosten per kWh warmte** per kwartier: de stroomprijs (of, bij PV-overschot boven het basisverbruik, de gemiste terugleververgoeding = marktprijs), gedeeld door de COP bij de buitentemperatuur (COP ≈ 3,5 + 0,15 × T, tussen 2,5 en 7).
+- **Gas** (sinds v0.8, optioneel): met een gasprijssensor (all-in per m³, bijvoorbeeld de gasprijs van Jeroen.nl) vergelijkt de planner per kwartier de kosten van warmte uit de warmtepomp (prijs ÷ COP) met die uit de ketel (gasprijs ÷ (9,77 kWh/m³ × 90%)). Waar de ketel goedkoper is (vorst, prijspiek), plant hij geen runs om kosten; de regel voor de langste tijd zonder run blijft. Attributen `gas_cost_per_kwh_heat` en `gas_cheaper_quarters` op *Volgende geplande run*.
 - **Stand van het huis** (sinds v0.5): staat de woonkamer onder het comfortsetpoint, dan komt er warmte bij (warmtecapaciteit × verschil, standaard 15 kWh/K, maximaal 2 K); staat hij erboven, dan gebruikt de planner eerst die opgeslagen warmte. Alleen in het stookseizoen. Het attribuut `state_kwh` toont dat deel.
 - **Comfort:** runs van minimaal een uur, en nooit langer dan de ingestelde tijd (standaard 8 uur) zonder run. In de zomer, zonder warmtevraag, wordt er niets gepland.
 - **Pieken:** geen vast venster meer (sinds v0.4.5). De prijs per kwartier bevat de ochtend- en avondpiek al, dus de goedkoopste blokken vermijden die vanzelf; een goedkope avond wordt gewoon gebruikt.
@@ -319,7 +341,7 @@ cards:
 
 ### Instellingen (v0.3, v0.4)
 
-Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kies je *Planner en advies*, *Sturing*, *Slaapkamers* of *Energie- en kostenoverzicht*. Onder het eerste: de databronnen hierboven, comfortsetpoint, de band voor de vloerregel, minimale vloermarge, PV-overschot voor een run, minimale runtijd, het deel van de dag dat als prijspiek telt (standaard 25%), de langste tijd zonder run, het basisverbruik van het huis, het comfortminimum en -maximum en de warmtecapaciteit van het huis. Wijzigingen gelden direct.
+Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kies je *Planner en advies*, *Sturing*, *Slaapkamers*, *Aftoppen en witgoed* of *Energie- en kostenoverzicht*. Onder het eerste: de databronnen hierboven, comfortsetpoint, de band voor de vloerregel, minimale vloermarge, PV-overschot voor een run, minimale runtijd, het deel van de dag dat als prijspiek telt (standaard 25%), de langste tijd zonder run, het basisverbruik van het huis, het comfortminimum en -maximum en de warmtecapaciteit van het huis. Wijzigingen gelden direct.
 
 ### Energie- en kostenoverzicht (v0.4)
 
