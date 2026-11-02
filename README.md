@@ -12,14 +12,14 @@ Home EMS leest sensoren uit en laat zien wat het **zou** doen. Het schrijft niet
 
 | Entiteit | Betekenis |
 |---|---|
-| `sensor.home_ems_advice` | `run`, `keep_running`, `running`, `wait` of `unknown`, met de reden als attribuut |
+| `sensor.home_ems_advice` | `run`, `keep_running`, `running`, `wait` of `unknown`, met de reden als attribuut; bij `run` ook `setpoint_hint` (woonkamer + 0,2 °C) |
 | `binary_sensor.home_ems_heat_pump_running` | warmtepomp draait (vermogen > 100 W) |
 | `binary_sensor.home_ems_peak_window` | binnen het avondvenster 17:30–20:00 |
 | `sensor.home_ems_floor_margin` | flowmetertemperatuur min woonkamertemperatuur (K), alleen als de warmtepomp stilstaat |
 | `sensor.home_ems_pv_surplus` | teruglevering op dit moment (W) |
 | `sensor.home_ems_runs_today` / `short_runs_today` | aantal runs en runs korter dan 30 min vandaag |
 
-Advieslogica: buiten het avondvenster een run als de vloermarge onder 0,5 K komt **en de woonkamer onder 19,5 °C is** (comfortsetpoint 19,0 °C + 0,5 °C, sinds v0.2.1), of bij ≥ 700 W PV-overschot zolang de vloermarge onder 3 K ligt; een lopende run korter dan 30 min hoort door te lopen.
+Advieslogica: buiten het avondvenster een run als de vloermarge onder 0 K komt (het vloerwater kouder dan de woonkamer; sinds v0.4.4, daarvoor 0,5 K) **en de woonkamer onder 19,5 °C is** (comfortsetpoint 19,0 °C + 0,5 °C, sinds v0.2.1), of bij ≥ 700 W PV-overschot zolang de vloermarge onder 3 K ligt; een lopende run korter dan 30 min hoort door te lopen. Een run start je het zuinigst met een setpoint net boven de woonkamer (`setpoint_hint`): tado laat de warmtepomp dan op laag toerental draaien, met een hogere COP dan bij een grote stap. Bij een eerder opgeslagen instelling blijft de oude minimale vloermarge staan; pas die aan onder *Configureren → Planner en advies*.
 
 ### Advies vergelijken met de werkelijkheid (v0.2)
 

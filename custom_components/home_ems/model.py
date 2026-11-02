@@ -27,15 +27,20 @@ class Settings:
 
     running_threshold_w: float = 100.0
     min_run: timedelta = timedelta(minutes=30)
-    # Floor water (flowmeter) minus living room temperature. The current automation
-    # starts below 20 C flowmeter at ~19.4 C living room, i.e. a margin of ~0.5 K.
-    floor_min_margin: float = 0.5
+    # Floor water (flowmeter) minus living room temperature. A test day without floor
+    # guard showed the floor water can fall to room temperature without loss of
+    # comfort, so a run is only needed once it drops below the room (margin < 0 K).
+    floor_min_margin: float = 0.0
     floor_full_margin: float = 3.0
     # The floor rule only applies while the living room is below comfort + band. On
     # 26 Oct 2026 the floor guard started a run at 19.8 C with a 19.0 C comfort setpoint.
     comfort_setpoint: float = 19.0
     floor_rule_band: float = 0.5
     pv_run_threshold_w: float = 700.0
+    # Setpoint to start a run with: this far above the living room. tado modulates on
+    # the gap between setpoint and room, so a small gap keeps the compressor at low
+    # speed with a clearly higher COP than a large step.
+    run_setpoint_offset: float = 0.2
     peak_start: time = time(17, 30)
     peak_end: time = time(20, 0)
     # Gaps between evaluations longer than this (HA restart, outage) are not counted.
@@ -180,6 +185,7 @@ class Evaluation:
     floor_margin: float | None   # only at rest; None while running
     pv_surplus_w: float | None
     in_peak: bool
+    setpoint_hint: float | None = None  # living room + offset when a run is advised
 
 
 def is_running(inputs: Inputs, settings: Settings) -> bool | None:
@@ -208,7 +214,12 @@ def evaluate(inputs: Inputs, tracker: RunTracker, now: datetime,
     peak = in_peak_window(now, settings)
 
     def result(advice: Advice, reason: str) -> Evaluation:
-        return Evaluation(advice, reason, running, floor_margin, surplus, peak)
+        hint = (
+            round(inputs.living_temp + settings.run_setpoint_offset, 1)
+            if advice is Advice.RUN and inputs.living_temp is not None
+            else None
+        )
+        return Evaluation(advice, reason, running, floor_margin, surplus, peak, hint)
 
     if running is None:
         return result(Advice.UNKNOWN, "heat pump power unavailable")

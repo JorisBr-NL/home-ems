@@ -147,6 +147,7 @@ SENSORS: tuple[HomeEmsSensorDescription, ...] = (
         options=[a.value for a in Advice],
         value_fn=lambda c: c.data.advice.value,
         attrs_fn=lambda c: {"reason": c.data.reason, "mode": "observation",
+                            "setpoint_hint": c.data.setpoint_hint,
                             "plan_says_run": bool(c.plan and c.plan.running_now(dt_util.now()))},
     ),
     # --- day planner (v0.3)
