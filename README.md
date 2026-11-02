@@ -207,6 +207,87 @@ series:
 
 Het plan (paars) loopt vanaf nu; wat er eerder gebeurde, zie je aan de grijze blokken.
 
+### Dashboardkaart: gewenst setpoint en sturing
+
+Bovenaan de schakelaars en de status, daaronder een grafiek van 24 uur: de oranje trap is het gewenste setpoint van Home EMS, de blauwe trap het echte setpoint van de thermostaat, de groene lijn de woonkamertemperatuur en grijze blokken wanneer de warmtepomp draaide. In schaduwmodus zie je zo of Home EMS hetzelfde zou doen als je huidige regeling; met de sturing aan liggen oranje en blauw over elkaar. Vereist [apexcharts-card](https://github.com/RomRider/apexcharts-card). Vervang `climate.woonkamer` door je eigen thermostaat en controleer de entity-ID's via **Instellingen → Entiteiten** (ze volgen de taal van Home Assistant bij het installeren).
+
+```yaml
+type: vertical-stack
+cards:
+  - type: entities
+    title: Home EMS
+    entities:
+      - entity: switch.home_ems_ems_actief
+      - entity: switch.home_ems_sturing_setpoint_schrijven
+      - entity: sensor.home_ems_status_sturing
+        secondary_info: last-changed
+      - entity: sensor.home_ems_gewenst_setpoint_woonkamer
+        type: attribute
+        attribute: source
+        name: Bron gewenst setpoint
+      - entity: sensor.home_ems_advies
+      - entity: sensor.home_ems_setpointwijzigingen_vandaag
+  - type: custom:apexcharts-card
+    header:
+      show: true
+      title: Setpoint woonkamer
+      show_states: true
+      colorize_states: true
+    graph_span: 24h
+    apex_config:
+      chart:
+        height: 280
+      legend:
+        show: true
+        position: top
+      tooltip:
+        shared: true
+        x:
+          format: "dd MMM HH:mm"
+    yaxis:
+      - id: temp
+        decimals: 1
+        apex_config:
+          title:
+            text: "°C"
+      - id: run
+        show: false
+        min: 0
+        max: 1
+    series:
+      - entity: sensor.home_ems_gewenst_setpoint_woonkamer
+        name: Gewenst (Home EMS)
+        yaxis_id: temp
+        curve: stepline
+        color: "#ef6c00"
+        stroke_width: 2
+      - entity: climate.woonkamer
+        attribute: temperature
+        name: Setpoint thermostaat
+        yaxis_id: temp
+        curve: stepline
+        color: "#1e88e5"
+        stroke_width: 2
+      - entity: climate.woonkamer
+        attribute: current_temperature
+        name: Woonkamer
+        yaxis_id: temp
+        color: "#43a047"
+        stroke_width: 1
+      - entity: binary_sensor.home_ems_warmtepomp_draait
+        name: Warmtepomp draait
+        yaxis_id: run
+        type: area
+        curve: stepline
+        color: "#9e9e9e"
+        opacity: 0.3
+        stroke_width: 0
+        transform: "return x === 'on' ? 1 : 0;"
+        show:
+          in_header: false
+          legend_value: false
+```
+
 ### Instellingen (v0.3, v0.4)
 
 Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kies je *Planner en advies*, *Sturing* of *Energie- en kostenoverzicht*. Onder het eerste: de databronnen hierboven, comfortsetpoint, de band voor de vloerregel, minimale vloermarge, PV-overschot voor een run, minimale runtijd, het deel van de dag dat als prijspiek telt (standaard 25%), de langste tijd zonder run, het basisverbruik van het huis, het comfortminimum en -maximum en de warmtecapaciteit van het huis. Wijzigingen gelden direct.
