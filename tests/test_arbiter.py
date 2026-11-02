@@ -88,3 +88,12 @@ def test_current_setpoint_is_kept_while_it_still_asks_for_heat():
     assert t.setpoint == 19.1                                # gap too large: back to + 0.1
     t = arbiter.target_setpoint(ev(Advice.WAIT), 19.0, False, current_setpoint=19.2)
     assert t.setpoint == 18.0                                # idle is not kept
+
+
+def test_bedroom_call_starts_or_holds_a_run_after_floor_and_keep_running():
+    t = arbiter.target_setpoint(ev(Advice.WAIT), 19.0, False, bedroom_call=True)
+    assert (t.setpoint, t.source) == (19.2, "bedroom")
+    t = arbiter.target_setpoint(ev(Advice.RUNNING, running=True), 19.0, False, bedroom_call=True)
+    assert (t.setpoint, t.source) == (19.1, "bedroom")
+    assert arbiter.target_setpoint(ev(Advice.RUN, "floor"), 19.0, False, bedroom_call=True).source == "floor"
+    assert arbiter.target_setpoint(ev(Advice.WAIT), 19.0, False, enabled=False, bedroom_call=True).source == "off"

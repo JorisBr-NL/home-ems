@@ -131,6 +131,9 @@
       },
       "setpoint_writes_today": {
         "name": "Setpoint changes today"
+      },
+      "bedrooms_open": {
+        "name": "Bedrooms open"
       }
     },
     "switch": {
@@ -149,6 +152,7 @@
         "menu_options": {
           "planner": "Planner and advice",
           "control": "Control (write setpoint)",
+          "bedrooms": "Bedrooms",
           "overview": "Energy and cost overview"
         }
       },
@@ -180,6 +184,15 @@
           "write_interval_minutes": "Minimum time between two changes"
         }
       },
+      "bedrooms": {
+        "title": "Bedrooms",
+        "description": "Radiator thermostats in the bedrooms only open a valve; warm water flows while the living room asks for heat. Home EMS opens them during runs in the evening window before bedtime, and asks for a short run shortly before bedtime if a room is still too cold. Shadow mode: nothing is written.",
+        "data": {
+          "bedrooms": "Rooms (YAML: entiteit, naam, doel, bedtijd)",
+          "bedroom_min_temp": "Minimum outside the evening window",
+          "bedroom_lead_hours": "Evening window before bedtime"
+        }
+      },
       "overview": {
         "title": "Energy and cost overview",
         "description": "Choose the long-term statistics (the same as in the Energy dashboard) and enter contracts and advance payments as YAML. Home EMS builds a monthly overview with a forecast for the rest of the year and, if a folder is given, writes it as CSV (semicolon, decimal comma) every hour.",
@@ -200,7 +213,8 @@
       }
     },
     "error": {
-      "invalid_cost_settings": "The cost settings are not valid YAML or miss a field (each contract needs at least 'vanaf')."
+      "invalid_cost_settings": "The cost settings are not valid YAML or miss a field (each contract needs at least 'vanaf').",
+      "invalid_bedrooms": "The rooms are not valid YAML, or a room misses 'entiteit' (a climate entity)."
     }
   }
 }

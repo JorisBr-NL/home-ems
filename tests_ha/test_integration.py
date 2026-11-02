@@ -5,12 +5,16 @@ from datetime import timedelta
 
 from homeassistant.core import HomeAssistant, State
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
     async_mock_service,
     mock_restore_cache,
 )
 
-from .conftest import LIVING, set_house
+from custom_components.home_ems.const import DOMAIN
+
+from .conftest import DATA, LIVING, set_house
 
 TARGET = "sensor.home_ems_target_setpoint_living_room"
 CONTROL = "switch.home_ems_control_write_setpoint"
@@ -122,3 +126,19 @@ async def test_options_menu_has_control_and_keeps_other_screens(recorder_mock, h
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["override_hours"] == 3
     assert entry.options["comfort_setpoint"] == 19.5   # planner screen value kept
+
+
+async def test_bedroom_below_target_before_bedtime_asks_for_a_run(hass, freezer):
+    freezer.move_to("2026-11-10T20:00:00+00:00")
+    bedtime = (dt_util.now() + timedelta(minutes=30)).strftime("%H:%M")
+    set_house(hass, flow=21.0)                    # floor fine: no floor run
+    hass.states.async_set("climate.room_a", "heat", {"current_temperature": 15.0, "temperature": 13.0})
+    entry = MockConfigEntry(domain=DOMAIN, title="Home EMS", data=DATA, unique_id=DOMAIN, options={
+        "bedrooms": f'- entiteit: climate.room_a\n  naam: Room A\n  doel: 17\n  bedtijd: "{bedtime}"\n'})
+    await _setup(hass, entry)
+
+    rooms = hass.states.get("sensor.home_ems_bedrooms_open")
+    assert rooms.state == "1" and rooms.attributes["needs_run"] is True
+    assert rooms.attributes["rooms"][0]["setpoint"] == 17.0
+    target = hass.states.get(TARGET)
+    assert target.attributes["source"] == "bedroom" and float(target.state) == 19.2

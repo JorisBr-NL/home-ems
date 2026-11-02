@@ -182,6 +182,15 @@ SENSORS: tuple[HomeEmsSensorDescription, ...] = (
         suggested_display_precision=2,
         value_fn=lambda c: round(c.tracker.stats.negative_price_export_kwh, 3),
     ),
+    # --- bedrooms (v0.7, shadow mode)
+    HomeEmsSensorDescription(
+        key="bedrooms_open",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c: sum(1 for r in c.room_targets if r.setpoint > c.bedroom_settings().min_temp)
+        if c.room_targets else None,
+        attrs_fn=lambda c: {"mode": "shadow", "rooms": [r.as_dict() for r in c.room_targets],
+                            "needs_run": any(r.needs_run for r in c.room_targets)},
+    ),
     # --- executor (v0.6)
     HomeEmsSensorDescription(
         key="control_status",
