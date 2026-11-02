@@ -29,4 +29,15 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install -r requirements_test.txt
-      - run: pytest
+      - run: pytest tests
+
+  ha-tests:
+    # the integration inside a real Home Assistant test instance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install -r requirements_test_ha.txt
+      - run: pytest tests_ha
