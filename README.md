@@ -238,24 +238,31 @@ Het plan (paars) loopt vanaf nu; wat er eerder gebeurde, zie je aan de grijze bl
 
 ### Dashboardkaart: gewenst setpoint en sturing
 
-Bovenaan de schakelaars en de status, daaronder een grafiek van 24 uur: de oranje trap is het gewenste setpoint van Home EMS, de blauwe trap het echte setpoint van de thermostaat, de groene lijn de woonkamertemperatuur en grijze blokken wanneer de warmtepomp draaide. In schaduwmodus zie je zo of Home EMS hetzelfde zou doen als je huidige regeling; met de sturing aan liggen oranje en blauw over elkaar. Vereist [apexcharts-card](https://github.com/RomRider/apexcharts-card). Vervang `climate.woonkamer` door je eigen thermostaat en controleer de entity-ID's via **Instellingen → Entiteiten** (ze volgen de taal van Home Assistant bij het installeren).
+Bovenaan de schakelaars en de status (zonder kopschakelaar, die zou ook *Sturing* aanzetten), daaronder een grafiek van 24 uur: de oranje trap is het gewenste setpoint van Home EMS, de blauwe trap het echte setpoint van de thermostaat, de groene lijn de woonkamertemperatuur en grijze blokken wanneer de warmtepomp draaide. In schaduwmodus zie je zo of Home EMS hetzelfde zou doen als je huidige regeling; met de sturing aan liggen oranje en blauw over elkaar. Vereist [apexcharts-card](https://github.com/RomRider/apexcharts-card). Vervang `climate.woonkamer` door je eigen thermostaat en controleer de entity-ID's via **Instellingen → Entiteiten** (ze volgen de taal van Home Assistant bij het installeren).
 
 ```yaml
 type: vertical-stack
 cards:
   - type: entities
     title: Home EMS
+    # no header toggle: it would switch all switches at once, control included
+    show_header_toggle: false
     entities:
       - entity: switch.home_ems_ems_actief
+        name: EMS actief
       - entity: switch.home_ems_sturing_setpoint_schrijven
+        name: Sturing actief
       - entity: sensor.home_ems_status_sturing
+        name: Status sturing
         secondary_info: last-changed
       - entity: sensor.home_ems_gewenst_setpoint_woonkamer
         type: attribute
         attribute: source
         name: Bron gewenst setpoint
       - entity: sensor.home_ems_advies
+        name: Advies
       - entity: sensor.home_ems_setpointwijzigingen_vandaag
+        name: Setpointwijzigingen vandaag
   - type: custom:apexcharts-card
     header:
       show: true
