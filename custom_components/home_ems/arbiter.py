@@ -7,9 +7,10 @@ fixed order of priority:
     switched off > comfort minimum > floor > keep running (minimum run time)
     > planner > PV surplus (start, or hold while still exporting) > idle
 
-Shadow mode: the target is only published next to the current setpoint, nothing is
-written. Runs are started and held with a setpoint just above the room, because tado
-modulates on that gap (small gap = low compressor speed = higher COP).
+Runs are started and held with a setpoint just above the room, because tado modulates
+on that gap (small gap = low compressor speed = higher COP). While the current setpoint
+still asks for heat with such a small gap, it is kept, so the thermostat is not rewritten
+for every 0.1 C the room warms up.
 """
 from __future__ import annotations
 
@@ -29,6 +30,9 @@ class ArbiterSettings:
     # No run wanted: the setpoint goes to the comfort minimum, so tado itself only
     # asks for heat as a safety net and the EMS decides when runs happen.
     idle_setpoint: float = 18.0
+    # keep the current setpoint during a run while it is above the room and at most this
+    # far above the wanted value
+    keep_band: float = 0.2
 
 
 @dataclass(frozen=True)
@@ -43,7 +47,8 @@ class Target:
 
 
 def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_now: bool,
-                    enabled: bool = True, settings: ArbiterSettings | None = None) -> Target:
+                    enabled: bool = True, settings: ArbiterSettings | None = None,
+                    current_setpoint: float | None = None) -> Target:
     s = settings or ArbiterSettings()
     if not enabled:
         return Target(None, "off", "EMS switched off: the thermostat schedule leads")
@@ -54,8 +59,15 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
     def clamp(value: float) -> float:
         return round(min(s.comfort_max, max(s.comfort_min, value)), 1)
 
-    start = clamp(living_temp + s.start_offset)
-    hold = clamp(living_temp + s.hold_offset)
+    def keep(value: float) -> float:
+        # the current setpoint still asks for heat with a small gap: leave it as it is
+        if (current_setpoint is not None and living_temp < current_setpoint
+                and current_setpoint <= min(value + s.keep_band, s.comfort_max)):
+            return current_setpoint
+        return value
+
+    start = keep(clamp(living_temp + s.start_offset))
+    hold = keep(clamp(living_temp + s.hold_offset))
     running = evaluation.heat_pump_running
 
     if evaluation.advice == "run" and evaluation.cause == "comfort_min":

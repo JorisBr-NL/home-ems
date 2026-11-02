@@ -260,7 +260,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
     def _target(self, evaluation: Evaluation, living_temp: float | None, now: datetime) -> Target:
         plan_now = bool(self.plan and self.plan.running_now(now))
         return target_setpoint(evaluation, living_temp, plan_now, self.enabled,
-                               self.arbiter_settings())
+                               self.arbiter_settings(), self.current_setpoint())
 
     def current_setpoint(self) -> float | None:
         state = self.hass.states.get(self.config_entry.data.get(CONF_LIVING_CLIMATE) or "")
