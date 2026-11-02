@@ -118,7 +118,7 @@ async def test_options_menu_has_control_and_keeps_other_screens(recorder_mock, h
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] is FlowResultType.MENU
-    assert result["menu_options"] == ["planner", "control", "overview"]
+    assert result["menu_options"] == ["planner", "control", "bedrooms", "overview"]
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "control"})
     assert result["type"] is FlowResultType.FORM and result["step_id"] == "control"
     result = await hass.config_entries.options.async_configure(
