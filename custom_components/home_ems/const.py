@@ -31,6 +31,10 @@ OPT_MIN_RUN = "min_run_minutes"
 OPT_EXPENSIVE_SHARE = "expensive_share_pct"  # % most expensive quarters of the day = price peak
 OPT_MAX_GAP = "max_gap_hours"
 OPT_BASE_LOAD = "base_load_kw"
+# options (v0.5): comfort band for the arbiter, heat capacity of the house for the planner
+OPT_COMFORT_MIN = "comfort_min"
+OPT_COMFORT_MAX = "comfort_max"
+OPT_CAPACITY = "capacity_kwh_k"
 
 OPTION_DEFAULTS = {
     OPT_COMFORT_SETPOINT: 19.0,
@@ -41,6 +45,9 @@ OPTION_DEFAULTS = {
     OPT_EXPENSIVE_SHARE: 25,
     OPT_MAX_GAP: 8,
     OPT_BASE_LOAD: 0.4,
+    OPT_COMFORT_MIN: 18.0,
+    OPT_COMFORT_MAX: 21.5,
+    OPT_CAPACITY: 15.0,
 }
 
 # options (v0.4): energy and cost overview, sources are long-term statistics

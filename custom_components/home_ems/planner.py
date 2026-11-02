@@ -34,6 +34,12 @@ class PlannerSettings:
     block: timedelta = timedelta(hours=1)      # minimum length of a planned run
     max_gap: timedelta = timedelta(hours=8)    # longest time without a run
     horizon: timedelta = timedelta(hours=36)
+    # State of the house: heat stored above (or missing below) the target temperature
+    # changes the heat need by capacity x difference. Capacity from a cooling test
+    # (the low side of the estimate, so the house is assumed to cool down faster).
+    capacity_kwh_k: float = 15.0
+    target_temp: float = 19.0
+    max_state_k: float = 2.0          # cap on the difference that is counted
     # No fixed peak window: the quarter prices themselves carry the morning and
     # evening peaks, so the cheapest blocks already avoid them.
     tz: tzinfo = ZoneInfo("Europe/Amsterdam")
@@ -89,6 +95,7 @@ class Plan:
     runs: tuple[PlannedRun, ...] = field(default_factory=tuple)
     expected_cost: float = 0.0
     baseline_cost: float = 0.0   # same heat at the average cost per kWh heat of the horizon
+    state_kwh: float = 0.0       # part of the heat need from the room being below target
 
     @property
     def run_hours(self) -> float:
@@ -167,8 +174,16 @@ def heat_need(slots: list[Slot], s: PlannerSettings) -> float:
     return max(0.0, s.heat_base_kwh_day * span_days + s.heat_per_dh * dh)
 
 
+def state_heat(living_temp: float | None, s: PlannerSettings) -> float:
+    """Extra heat (kWh, negative = stored heat to use up) to bring the house to target."""
+    if living_temp is None:
+        return 0.0
+    diff = max(-s.max_state_k, min(s.max_state_k, s.target_temp - living_temp))
+    return s.capacity_kwh_k * diff
+
+
 def plan(slots: list[Slot], now: datetime, s: PlannerSettings | None = None,
-         last_run_end: datetime | None = None) -> Plan | None:
+         last_run_end: datetime | None = None, living_temp: float | None = None) -> Plan | None:
     """Plan runs from `now` until the end of the horizon (or of the price data)."""
     s = s or PlannerSettings()
     end = now + s.horizon
@@ -177,7 +192,9 @@ def plan(slots: list[Slot], now: datetime, s: PlannerSettings | None = None,
     if not slots:
         return None
     costs = [slot_cost(x, s) for x in slots]
-    need = heat_need(slots, s)
+    season_need = heat_need(slots, s)
+    state = state_heat(living_temp, s) if season_need > 0 else 0.0   # only in the heating season
+    need = max(0.0, season_need + state)
     per_block = round(s.block / QUARTER)
     blocks_needed = math.ceil(need / (s.heat_rate_kw * s.block.total_seconds() / 3600) - 1e-9)
 
@@ -206,7 +223,7 @@ def plan(slots: list[Slot], now: datetime, s: PlannerSettings | None = None,
     # comfort: no gap longer than max_gap, counted from the last run (or now); only
     # when there is heat demand at all, so not in summer
     previous = last_run_end or now
-    while need > 0:
+    while season_need > 0:   # also when stored heat covers the need, as a safety net
         runs_sorted = sorted(chosen)
         gap_start, gap_end = previous, None
         for i in runs_sorted:
@@ -232,7 +249,7 @@ def plan(slots: list[Slot], now: datetime, s: PlannerSettings | None = None,
     planned_heat = sum(r.heat_kwh for r in runs)
     return Plan(made=now, horizon_end=slots[-1].start + QUARTER, heat_need_kwh=round(need, 2),
                 runs=tuple(runs), expected_cost=round(sum(r.cost for r in runs), 3),
-                baseline_cost=round(avg_cost_heat * planned_heat, 3))
+                baseline_cost=round(avg_cost_heat * planned_heat, 3), state_kwh=round(state, 2))
 
 
 def _merge(chosen: list[int], costs: list[SlotCost], per_block: int, reasons: dict[int, str],

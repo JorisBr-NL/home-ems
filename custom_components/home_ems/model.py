@@ -37,6 +37,13 @@ class Settings:
     # 26 Oct 2026 the floor guard started a run at 19.8 C with a 19.0 C comfort setpoint.
     comfort_setpoint: float = 19.0
     floor_rule_band: float = 0.5
+    # Hard lower bound for the living room and the kitchen (the kitchen is only a
+    # measuring point, it no longer asks for heat itself): below it a run is needed,
+    # also in a price peak.
+    comfort_min: float = 18.0
+    # The flowmeter only shows the floor water while the floor pump circulates; below
+    # this flow rate the floor margin is not used (standing water).
+    pump_on_lph: float = 100.0
     pv_run_threshold_w: float = 700.0
     # Setpoint to start a run with: this far above the living room. tado modulates on
     # the gap between setpoint and room, so a small gap keeps the compressor at low
@@ -61,6 +68,9 @@ class Inputs:
     grid_power_w: float | None  # positive = import, negative = export
     price_now: float | None = None          # all-in price of the current quarter
     day_prices: tuple[float, ...] = ()      # all known quarter prices of today
+    market_now: float | None = None         # market price of the current quarter
+    kitchen_temp: float | None = None
+    flow_rate_lph: float | None = None      # None = no flow rate sensor
 
 
 @dataclass
@@ -74,6 +84,9 @@ class DayStats:
     advised_run_minutes: float = 0.0   # EMS advised a run while the heat pump was off
     running_minutes: float = 0.0
     pv_running_minutes: float = 0.0    # heat pump running while the house exports
+    # export while the market price is negative: with a dynamic contract this costs
+    # money, and it shows whether switching off the inverters is worth it
+    negative_price_export_kwh: float = 0.0
 
 
 @dataclass
@@ -119,7 +132,7 @@ class RunTracker:
         return now - self.run_start
 
     def account(self, advice: Advice, running: bool, grid_power_w: float | None,
-                started: bool, now: datetime) -> None:
+                started: bool, now: datetime, market_now: float | None = None) -> None:
         """Add time-based counters for the step since the previous evaluation."""
         if started and self.last_advice is Advice.WAIT:
             self.stats.unadvised_starts += 1
@@ -127,6 +140,9 @@ class RunTracker:
             step = now - self.last_eval
             if timedelta(0) < step <= self.settings.max_step:
                 minutes = step.total_seconds() / 60
+                if (grid_power_w is not None and grid_power_w < 0
+                        and market_now is not None and market_now < 0):
+                    self.stats.negative_price_export_kwh += -grid_power_w / 1000 * minutes / 60
                 if running:
                     self.stats.running_minutes += minutes
                     if grid_power_w is not None and grid_power_w < 0:
@@ -190,6 +206,8 @@ class Evaluation:
     pv_surplus_w: float | None
     in_peak: bool
     setpoint_hint: float | None = None  # living room + offset when a run is advised
+    # why a run is advised: "comfort_min", "floor" or "pv" (None for other advice)
+    cause: str | None = None
 
 
 def is_running(inputs: Inputs, settings: Settings) -> bool | None:
@@ -198,16 +216,18 @@ def is_running(inputs: Inputs, settings: Settings) -> bool | None:
     return inputs.heat_pump_power_w > settings.running_threshold_w
 
 
-def prices_today(rows: list[dict], now: datetime) -> tuple[float | None, tuple[float, ...]]:
+def prices_today(rows: list[dict], now: datetime,
+                 key: str = "price") -> tuple[float | None, tuple[float, ...]]:
     """Price of the current quarter and all quarter prices of today (the local day of
     `now`, an aware datetime). `rows` must cover the whole day, including quarters that
     are already over (the `today` attribute of the Jeroen.nl price sensor, not
-    `prices`, which starts at now): otherwise the peak shifts to whatever is left."""
+    `prices`, which starts at now): otherwise the peak shifts to whatever is left.
+    `key` picks the all-in "price" or the "market" price."""
     day: list[tuple[datetime, float]] = []
     for row in rows or []:
         try:
             start = datetime.fromisoformat(str(row["start"]))
-            price = float(row["price"])
+            price = float(row[key])
         except (KeyError, TypeError, ValueError):
             continue
         if start.tzinfo is not None and start.astimezone(now.tzinfo).date() == now.date():
@@ -231,9 +251,11 @@ def evaluate(inputs: Inputs, tracker: RunTracker, now: datetime,
     """Update the run tracker and decide what the EMS would do now."""
     settings = settings or tracker.settings
     running = is_running(inputs, settings)
+    pump_on = inputs.flow_rate_lph is None or inputs.flow_rate_lph >= settings.pump_on_lph
     floor_margin = (
         round(inputs.flow_temp - inputs.living_temp, 2)
-        if inputs.flow_temp is not None and inputs.living_temp is not None and running is False
+        if inputs.flow_temp is not None and inputs.living_temp is not None
+        and running is False and pump_on
         else None
     )
     surplus = (
@@ -241,31 +263,38 @@ def evaluate(inputs: Inputs, tracker: RunTracker, now: datetime,
     )
     peak = is_expensive(inputs.price_now, inputs.day_prices, settings.expensive_share)
 
-    def result(advice: Advice, reason: str) -> Evaluation:
+    def result(advice: Advice, reason: str, cause: str | None = None) -> Evaluation:
         hint = (
             round(inputs.living_temp + settings.run_setpoint_offset, 1)
             if advice is Advice.RUN and inputs.living_temp is not None
             else None
         )
-        return Evaluation(advice, reason, running, floor_margin, surplus, peak, hint)
+        return Evaluation(advice, reason, running, floor_margin, surplus, peak, hint, cause)
 
     if running is None:
         return result(Advice.UNKNOWN, "heat pump power unavailable")
 
     started = tracker.observe(running, now)
-    evaluation = _decide(running, floor_margin, inputs.living_temp, surplus, peak, tracker,
+    evaluation = _decide(running, floor_margin, inputs, surplus, peak, tracker,
                          now, settings, result)
-    tracker.account(evaluation.advice, running, inputs.grid_power_w, started, now)
+    tracker.account(evaluation.advice, running, inputs.grid_power_w, started, now,
+                    inputs.market_now)
     return evaluation
 
 
-def _decide(running, floor_margin, living_temp, surplus, peak, tracker, now, settings,
+def _decide(running, floor_margin, inputs, surplus, peak, tracker, now, settings,
             result) -> Evaluation:
     if running:
         duration = tracker.run_duration(now)
         if duration is not None and duration < settings.min_run:
             return result(Advice.KEEP_RUNNING, "run shorter than minimum run time")
         return result(Advice.RUNNING, "run in progress")
+
+    living_temp = inputs.living_temp
+    cold = [name for name, temp in (("living room", living_temp), ("kitchen", inputs.kitchen_temp))
+            if temp is not None and temp < settings.comfort_min]
+    if cold:
+        return result(Advice.RUN, f"{' and '.join(cold)} below comfort minimum", "comfort_min")
 
     room_warm = (
         living_temp is not None
@@ -279,18 +308,18 @@ def _decide(running, floor_margin, living_temp, surplus, peak, tracker, now, set
             and floor_margin < settings.floor_min_margin - 1.0
             and not room_warm
         ):
-            return result(Advice.RUN, "floor far below limit during price peak")
+            return result(Advice.RUN, "floor far below limit during price peak", "floor")
         return result(Advice.WAIT, "price peak: avoid starting")
 
     if floor_low and not room_warm:
-        return result(Advice.RUN, "floor below minimum margin")
+        return result(Advice.RUN, "floor below minimum margin", "floor")
 
     if (
         surplus is not None
         and surplus >= settings.pv_run_threshold_w
         and (floor_margin is None or floor_margin < settings.floor_full_margin)
     ):
-        return result(Advice.RUN, "PV surplus available")
+        return result(Advice.RUN, "PV surplus available", "pv")
 
     if floor_low:
         return result(Advice.WAIT, "floor low but living room warm enough")

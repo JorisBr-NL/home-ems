@@ -110,6 +110,17 @@
       },
       "year_use_expected": {
         "name": "Verwacht stroomverbruik dit jaar"
+      },
+      "target_setpoint": {
+        "name": "Gewenst setpoint woonkamer"
+      },
+      "negative_price_export_today": {
+        "name": "Teruglevering bij negatieve prijs vandaag"
+      }
+    },
+    "switch": {
+      "ems_enabled": {
+        "name": "EMS actief"
       }
     }
   },
@@ -136,7 +147,10 @@
           "min_run_minutes": "Minimale runtijd",
           "expensive_share_pct": "Prijspiek: duurste deel van de dag",
           "max_gap_hours": "Langste tijd zonder run (planner)",
-          "base_load_kw": "Basisverbruik huis naast de warmtepomp (planner)"
+          "base_load_kw": "Basisverbruik huis naast de warmtepomp (planner)",
+          "comfort_min": "Comfortminimum (woonkamer en keuken)",
+          "comfort_max": "Comfortmaximum (gewenst setpoint)",
+          "capacity_kwh_k": "Warmtecapaciteit van het huis (planner)"
         }
       },
       "overview": {

@@ -23,6 +23,9 @@ from .const import (
     DOMAIN,
     NAME,
     OPT_BASE_LOAD,
+    OPT_CAPACITY,
+    OPT_COMFORT_MAX,
+    OPT_COMFORT_MIN,
     OPT_COMFORT_SETPOINT,
     OPT_COST_SETTINGS,
     OPT_EXPENSIVE_SHARE,
@@ -183,5 +186,8 @@ class HomeEmsOptionsFlow(OptionsFlow):
             vol.Required(OPT_EXPENSIVE_SHARE, default=current[OPT_EXPENSIVE_SHARE]): _number(0, 60, 5, "%"),
             vol.Required(OPT_MAX_GAP, default=current[OPT_MAX_GAP]): _number(2, 24, 0.5, "h"),
             vol.Required(OPT_BASE_LOAD, default=current[OPT_BASE_LOAD]): _number(0, 3, 0.05, "kW"),
+            vol.Required(OPT_COMFORT_MIN, default=current[OPT_COMFORT_MIN]): _number(15, 21, 0.1, "°C"),
+            vol.Required(OPT_COMFORT_MAX, default=current[OPT_COMFORT_MAX]): _number(19, 24, 0.1, "°C"),
+            vol.Required(OPT_CAPACITY, default=current[OPT_CAPACITY]): _number(0, 100, 0.5, "kWh/K"),
         })
         return self.async_show_form(step_id="planner", data_schema=schema)

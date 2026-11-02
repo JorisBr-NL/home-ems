@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+
 # Load model.py directly so the tests do not import the HA-dependent package __init__.
 _PATH = Path(__file__).parents[1] / "custom_components" / "home_ems" / "model.py"
 _SPEC = importlib.util.spec_from_file_location("home_ems_model", _PATH)
@@ -241,3 +243,36 @@ def test_restore_on_next_day_resets_counters():
     step(tracker, 1, 21, power=400)
     restored = RunTracker.from_dict(tracker.to_dict(), at(10) + timedelta(days=1))
     assert restored.stats.runs == 0
+
+
+def test_kitchen_below_comfort_minimum_asks_for_a_run_also_in_a_peak():
+    cold = Inputs(heat_pump_power_w=5.0, flow_temp=21.0, living_temp=19.4, grid_power_w=300.0,
+                  price_now=0.40, day_prices=(0.20,) * 72 + (0.40,) * 24, kitchen_temp=17.8)
+    result = evaluate(cold, RunTracker(), at(18))
+    assert result.advice is Advice.RUN and result.cause == "comfort_min"
+    assert "kitchen" in result.reason and result.in_peak
+
+
+def test_floor_margin_ignored_while_the_floor_pump_stands_still():
+    still = Inputs(heat_pump_power_w=5.0, flow_temp=18.0, living_temp=19.3, grid_power_w=300.0,
+                   flow_rate_lph=10.0)
+    result = evaluate(still, RunTracker(), at(10))
+    assert result.floor_margin is None and result.advice is Advice.WAIT
+    pumping = Inputs(heat_pump_power_w=5.0, flow_temp=18.0, living_temp=19.3, grid_power_w=300.0,
+                     flow_rate_lph=274.0)
+    result = evaluate(pumping, RunTracker(), at(10))
+    assert result.floor_margin == -1.3 and result.cause == "floor"
+
+
+def test_export_at_negative_market_price_is_counted():
+    tracker = RunTracker()
+    export = dict(heat_pump_power_w=5.0, flow_temp=22.0, living_temp=19.3, grid_power_w=-2000.0)
+    evaluate(Inputs(**export, market_now=-0.01), tracker, at(13))
+    evaluate(Inputs(**export, market_now=-0.01), tracker, at(13, 3))   # 3 min at 2 kW
+    evaluate(Inputs(**export, market_now=0.02), tracker, at(13, 6))    # positive: not counted
+    assert tracker.stats.negative_price_export_kwh == pytest.approx(0.1)
+
+
+def test_market_price_now_from_today_rows():
+    rows = [{"start": "2026-11-02T10:00:00+00:00", "price": 0.25, "market": -0.004}]
+    assert model.prices_today(rows, datetime(2026, 11, 2, 11, 5, tzinfo=CET), "market")[0] == -0.004
