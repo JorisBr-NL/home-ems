@@ -157,23 +157,56 @@ def test_boost_function():
     assert arbiter.boost(0.0, None, s) == (None, 0.0)
 
 
-def test_pv_boost_follows_the_grid_meter():
+def test_pv_boost_follows_the_five_minute_average_of_the_grid_meter():
     from datetime import datetime, timedelta
-    s = arbiter.ArbiterSettings(gap_max=0.6, boost_margin_w=100)
+    s = arbiter.ArbiterSettings(gap_max=0.6, boost_margin_w=300)
     b = arbiter.PvBoost()
     t0 = datetime(2026, 11, 10, 12, 0)
     five = timedelta(minutes=5)
-    m = lambda n: t0 + timedelta(minutes=n)
-    assert b.update(-600, True, m(0), five, s) == 0.1     # exporting: one step up
-    assert b.update(-600, True, m(2), five, s) == 0.1     # wait for the interval
-    assert b.update(-600, True, m(5), five, s) == 0.2
-    assert b.update(50, True, m(10), five, s) == 0.2      # within the margin: stays
-    assert b.update(900, True, m(15), five, s) == 0.1     # importing: one step down
-    assert b.update(900, True, m(20), five, s) == 0.0
-    assert b.update(900, True, m(25), five, s) == 0.0     # never below the normal gap
-    for n in range(30, 80, 5):
-        b.update(-2000, True, m(n), five, s)
-    assert b.extra == 0.5                                  # at most gap_max - hold offset
-    assert b.update(300, False, m(80), five, s) == 0.0     # at rest without export: 0 at once
+    minute = [0]
+
+    def feed(readings, running=True):
+        for w in readings:
+            b.update(w, running, t0 + timedelta(minutes=minute[0]), five, s)
+            minute[0] += 1
+        return b.extra
+
+    assert feed([-600] * 5) == 0.0          # first five minutes: averaging, no step yet
+    assert feed([-600]) == 0.1              # average 600 W out: one step up
+    assert feed([-600] * 5) == 0.2
+    # a kettle for one minute (+2000 W) within a sunny five minutes: average -80 W, stays
+    assert feed([-600, 2000, -600, -600, -600]) == 0.2
+    assert feed([800] * 5) == 0.1           # importing on average: one step down
+    assert feed([800] * 5) == 0.0
+    assert feed([800] * 5) == 0.0           # never below the normal gap
+    assert feed([-2000] * 60) == 0.5        # at most gap_max - hold offset
+    assert feed([0], running=False) == 0.0  # at rest without export: 0 at once
     off = arbiter.ArbiterSettings(boost_margin_w=0)
-    assert arbiter.PvBoost(extra=0.3).update(-2000, True, m(0), five, off) == 0.0
+    assert arbiter.PvBoost(extra=0.3).update(-2000, True, t0, five, off) == 0.0
+
+
+def test_night_window_wraps_past_midnight():
+    from datetime import time
+    w = arbiter.in_window
+    assert w(time(23, 30), time(23, 0), time(6, 0))
+    assert w(time(2, 0), time(23, 0), time(6, 0))
+    assert not w(time(6, 0), time(23, 0), time(6, 0))
+    assert not w(time(22, 59), time(23, 0), time(6, 0))
+    assert w(time(13, 0), time(12, 0), time(14, 0))
+    assert not w(time(1, 0), time(1, 0), time(1, 0))
+
+
+def test_night_ceiling_lets_the_house_cool():
+    assert arbiter.night_ceiling(20.0, 18.5, 18.0) == 18.5
+    assert arbiter.night_ceiling(20.0, 17.0, 18.0) == 18.0   # never below the comfort minimum
+    assert arbiter.night_ceiling(19.2, 19.5, 18.0) == 19.2   # never above the day ceiling
+    s = arbiter.ArbiterSettings(run_ceiling=18.5, night=True)
+    run = ev(Advice.RUNNING, running=True)
+    # a planned run with the room above the night ceiling: the setpoint drops below the room
+    t = arbiter.target_setpoint(run, 19.4, True, settings=s, current_setpoint=19.5)
+    assert t.setpoint == 18.5
+    # at night a low price does not lift the ceiling to the comfort maximum
+    cheap = arbiter.ArbiterSettings(run_ceiling=18.5, night=True, low_price=0.20)
+    assert arbiter.target_setpoint(run, 18.3, True, settings=cheap, price_now=0.10).setpoint == 18.5
+    day = arbiter.ArbiterSettings(run_ceiling=18.5, low_price=0.20)
+    assert arbiter.target_setpoint(run, 18.3, True, settings=day, price_now=0.10).setpoint > 18.5

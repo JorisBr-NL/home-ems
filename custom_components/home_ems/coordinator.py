@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,8 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     BEDROOM_DEFAULTS,
+    CONF_BATTERY_CHARGE_POSITIVE,
+    CONF_BATTERY_POWER,
     CONF_FLOW_RATE,
     CONF_FLOW_TEMPERATURE,
     CONF_GRID_POWER,
@@ -56,6 +58,9 @@ from .const import (
     OPT_PRICE_ENTITY,
     OPT_PV_POWER,
     OPT_PV_RUN_THRESHOLD,
+    OPT_NIGHT_CEILING,
+    OPT_NIGHT_END,
+    OPT_NIGHT_START,
     OPT_RUN_HEADROOM,
     OPT_SOLAR_ENTITY,
     OPT_STAT_EV,
@@ -82,7 +87,14 @@ from .const import (
     UPDATE_INTERVAL,
     WEATHER_REFRESH,
 )
-from .arbiter import ArbiterSettings, PvBoost, Target, target_setpoint
+from .arbiter import (
+    ArbiterSettings,
+    PvBoost,
+    Target,
+    in_window,
+    night_ceiling,
+    target_setpoint,
+)
 from .appliances import StartAdvice, best_start, parse_appliances
 from .bedrooms import Bedroom, BedroomSettings, RoomTarget, parse_rooms, room_targets
 from .curtail import CurtailAdvice, CurtailState, advise as curtail_advise
@@ -258,7 +270,17 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             kitchen_temp=self._climate_temperature(data.get(CONF_KITCHEN_CLIMATE)),
             flow_rate_lph=self._float_state(data.get(CONF_FLOW_RATE)),
             pv_power_w=self._pv_power(),
+            battery_charge_w=self._battery_charge(),
         )
+
+    def _battery_charge(self) -> float:
+        """What the batteries charge now (W, + = charging, - = discharging); 0 without them."""
+        data = self.config_entry.data
+        entities = data.get(CONF_BATTERY_POWER) or []
+        entities = [entities] if isinstance(entities, str) else entities
+        known = [v for v in (self._float_state(e) for e in entities) if v is not None]
+        sign = 1.0 if data.get(CONF_BATTERY_CHARGE_POSITIVE, True) else -1.0
+        return sign * sum(known)
 
     def _pv_power(self) -> float | None:
         """Solar production now: the sum of the inverter sensors, None if not all known."""
@@ -283,7 +305,10 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             except Exception:  # the overview must never stop the advice and the planner
                 _LOGGER.exception("Could not build the energy overview")
         self._price_now = inputs.price_now
-        self.pv_boost.update(inputs.grid_power_w, evaluation.heat_pump_running, now,
+        # the batteries charging is power the heat pump could use (heat comes first)
+        signal = (inputs.grid_power_w - inputs.battery_charge_w
+                  if inputs.grid_power_w is not None else None)
+        self.pv_boost.update(signal, evaluation.heat_pump_running, now,
                              timedelta(minutes=float(self.option(OPT_WRITE_INTERVAL))),
                              self.arbiter_settings())
         self.target = self._target(evaluation, inputs.living_temp, now)
@@ -293,12 +318,28 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
 
     # ------------------------------------------------------------ arbiter (shadow mode)
 
-    def arbiter_settings(self) -> ArbiterSettings:
+    def night_now(self, now: datetime | None = None) -> bool:
+        """The night ceiling is set and it is night now (local time)."""
+        if float(self.option(OPT_NIGHT_CEILING) or 0) <= 0:
+            return False
+        try:
+            start = time.fromisoformat(str(self.option(OPT_NIGHT_START)))
+            end = time.fromisoformat(str(self.option(OPT_NIGHT_END)))
+        except ValueError:
+            return False
+        moment = dt_util.as_local(now or dt_util.now()).time()
+        return in_window(moment, start, end)
+
+    def arbiter_settings(self, now: datetime | None = None) -> ArbiterSettings:
         comfort_min = float(self.option(OPT_COMFORT_MIN))
+        ceiling = float(self.option(OPT_COMFORT_SETPOINT)) + float(self.option(OPT_RUN_HEADROOM))
+        night = self.night_now(now)
+        if night:
+            ceiling = night_ceiling(ceiling, float(self.option(OPT_NIGHT_CEILING)), comfort_min)
         return ArbiterSettings(comfort_min=comfort_min,
                                comfort_max=float(self.option(OPT_COMFORT_MAX)),
-                               run_ceiling=float(self.option(OPT_COMFORT_SETPOINT))
-                               + float(self.option(OPT_RUN_HEADROOM)),
+                               run_ceiling=ceiling,
+                               night=night,
                                gap_max=float(self.option(OPT_GAP_MAX)),
                                boost_margin_w=float(self.option(OPT_BOOST_MARGIN)),
                                low_price=float(self.option(OPT_LOW_PRICE)),
@@ -311,7 +352,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             # keep going instead of stopping and starting again (after a restart or a
             # change of the plan, the run in progress may not be in the new plan)
             plan_now = self.plan.run_soon(now, timedelta(hours=float(self.option(OPT_MIN_PAUSE))))
-        args = (evaluation, living_temp, plan_now, self.enabled, self.arbiter_settings(),
+        args = (evaluation, living_temp, plan_now, self.enabled, self.arbiter_settings(now),
                 self.current_setpoint())
         target = target_setpoint(*args, price_now=self._price_now, pv_extra=self.pv_boost.extra)
         rooms = self.bedrooms() if self.enabled else []

@@ -80,6 +80,8 @@ def _target_attrs(c: HomeEmsCoordinator) -> dict[str, Any]:
         "would_write": t.differs_from(current) if t else False,
         "boost": t.boost if t else None,
         "boost_k": t.boost_k if t else 0.0,
+        "ceiling": c.arbiter_settings().run_ceiling,
+        "night": c.night_now(),
     }
 
 

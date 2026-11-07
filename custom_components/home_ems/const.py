@@ -16,6 +16,8 @@ CONF_FLOW_RATE = "flow_rate"
 CONF_GRID_POWER = "grid_power"
 CONF_OUTSIDE_TEMPERATURE = "outside_temperature"
 CONF_CHILL_CLIMATE = "chill_climate"
+CONF_BATTERY_POWER = "battery_power"            # battery power sensors (optional, v0.10.4)
+CONF_BATTERY_CHARGE_POSITIVE = "battery_charge_positive"   # True: positive = charging
 
 # options (v0.3): data sources for the planner
 OPT_PRICE_ENTITY = "price_entity"      # Jeroen.nl stroomprijs, attribute "prices"
@@ -39,6 +41,9 @@ OPT_CAPACITY = "capacity_kwh_k"
 # options (v0.9): steady runs in the cold
 OPT_MIN_PAUSE = "min_pause_hours"       # shorter pauses between planned runs are filled
 OPT_RUN_HEADROOM = "run_headroom_k"     # run ceiling = comfort setpoint + this
+OPT_NIGHT_CEILING = "night_ceiling"     # run ceiling at night (°C), 0 = off
+OPT_NIGHT_START = "night_start"         # night window start (local time)
+OPT_NIGHT_END = "night_end"             # night window end (local time)
 # options (v0.10): larger gap with solar surplus or a low price
 OPT_GAP_MAX = "gap_max_k"                # largest gap setpoint - room
 OPT_BOOST_MARGIN = "boost_margin_w"      # solar boost: step up/down beyond this export/import, 0 = off
@@ -58,8 +63,11 @@ OPTION_DEFAULTS = {
     OPT_CAPACITY: 15.0,
     OPT_MIN_PAUSE: 2.0,
     OPT_RUN_HEADROOM: 1.0,
+    OPT_NIGHT_CEILING: 0.0,
+    OPT_NIGHT_START: "23:00:00",
+    OPT_NIGHT_END: "06:00:00",
     OPT_GAP_MAX: 0.6,
-    OPT_BOOST_MARGIN: 100,
+    OPT_BOOST_MARGIN: 300,
     OPT_LOW_PRICE: 0.20,
 }
 

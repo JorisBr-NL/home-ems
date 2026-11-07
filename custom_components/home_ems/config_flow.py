@@ -15,6 +15,8 @@ from .const import (
     BEDROOMS_EXAMPLE,
     BEDROOM_DEFAULTS,
     BEDROOM_OPTIONS,
+    CONF_BATTERY_CHARGE_POSITIVE,
+    CONF_BATTERY_POWER,
     CONF_CHILL_CLIMATE,
     CONF_FLOW_RATE,
     CONF_FLOW_TEMPERATURE,
@@ -55,6 +57,9 @@ from .const import (
     OPT_PRICE_ENTITY,
     OPT_PV_POWER,
     OPT_PV_RUN_THRESHOLD,
+    OPT_NIGHT_CEILING,
+    OPT_NIGHT_END,
+    OPT_NIGHT_START,
     OPT_RUN_HEADROOM,
     OPT_SOLAR_ENTITY,
     OPT_STAT_EV,
@@ -102,6 +107,10 @@ SCHEMA = vol.Schema(
         vol.Required(CONF_GRID_POWER): POWER,
         vol.Optional(CONF_OUTSIDE_TEMPERATURE): TEMPERATURE,
         vol.Optional(CONF_CHILL_CLIMATE): CLIMATE,
+        vol.Optional(CONF_BATTERY_POWER): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="sensor", device_class="power", multiple=True)
+        ),
+        vol.Optional(CONF_BATTERY_CHARGE_POSITIVE, default=True): selector.BooleanSelector(),
     }
 )
 
@@ -276,6 +285,9 @@ class HomeEmsOptionsFlow(OptionsFlow):
             vol.Required(OPT_CAPACITY, default=current[OPT_CAPACITY]): _number(0, 100, 0.5, "kWh/K"),
             vol.Required(OPT_MIN_PAUSE, default=current[OPT_MIN_PAUSE]): _number(0, 8, 0.25, "h"),
             vol.Required(OPT_RUN_HEADROOM, default=current[OPT_RUN_HEADROOM]): _number(0, 3, 0.1, "K"),
+            vol.Required(OPT_NIGHT_CEILING, default=current[OPT_NIGHT_CEILING]): _number(0, 23, 0.1, "°C"),
+            vol.Required(OPT_NIGHT_START, default=current[OPT_NIGHT_START]): selector.TimeSelector(),
+            vol.Required(OPT_NIGHT_END, default=current[OPT_NIGHT_END]): selector.TimeSelector(),
             vol.Required(OPT_GAP_MAX, default=current[OPT_GAP_MAX]): _number(0.1, 2, 0.1, "K"),
             vol.Required(OPT_BOOST_MARGIN, default=current[OPT_BOOST_MARGIN]): _number(0, 2000, 10, "W"),
             vol.Required(OPT_LOW_PRICE, default=current[OPT_LOW_PRICE]): _number(0, 1, 0.01, "EUR/kWh"),
