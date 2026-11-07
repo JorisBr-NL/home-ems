@@ -16,6 +16,8 @@ CONF_FLOW_RATE = "flow_rate"
 CONF_GRID_POWER = "grid_power"
 CONF_OUTSIDE_TEMPERATURE = "outside_temperature"
 CONF_CHILL_CLIMATE = "chill_climate"
+CONF_BATTERY_POWER = "battery_power"            # battery power sensors (optional, v0.10.4)
+CONF_BATTERY_CHARGE_POSITIVE = "battery_charge_positive"   # True: positive = charging
 
 # options (v0.3): data sources for the planner
 OPT_PRICE_ENTITY = "price_entity"      # Jeroen.nl stroomprijs, attribute "prices"
@@ -59,7 +61,7 @@ OPTION_DEFAULTS = {
     OPT_MIN_PAUSE: 2.0,
     OPT_RUN_HEADROOM: 1.0,
     OPT_GAP_MAX: 0.6,
-    OPT_BOOST_MARGIN: 100,
+    OPT_BOOST_MARGIN: 300,
     OPT_LOW_PRICE: 0.20,
 }
 

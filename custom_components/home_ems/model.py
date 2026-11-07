@@ -67,6 +67,7 @@ class Inputs:
     living_temp: float | None
     grid_power_w: float | None  # positive = import, negative = export
     pv_power_w: float | None = None  # solar production now (sum of the inverters), if known
+    battery_charge_w: float = 0.0    # batteries charging (+) or discharging (-), 0 = none
     price_now: float | None = None          # all-in price of the current quarter
     day_prices: tuple[float, ...] = ()      # all known quarter prices of today
     market_now: float | None = None         # market price of the current quarter
@@ -261,11 +262,12 @@ def evaluate(inputs: Inputs, tracker: RunTracker, now: datetime,
         else None
     )
     # Solar surplus for the heat pump: the export, plus what the heat pump itself uses while
-    # it runs. Measured at the grid meter alone, the surplus would vanish as soon as the
-    # heat pump takes it, and a run on solar would undo itself.
+    # it runs, plus what the batteries charge. Measured at the grid meter alone, the surplus
+    # would vanish as soon as the heat pump (or a battery holding the meter at zero) takes it.
     own = inputs.heat_pump_power_w if running and inputs.heat_pump_power_w else 0.0
     surplus = (
-        max(0.0, own - inputs.grid_power_w) if inputs.grid_power_w is not None else None
+        max(0.0, own + inputs.battery_charge_w - inputs.grid_power_w)
+        if inputs.grid_power_w is not None else None
     )
     if surplus is not None and inputs.pv_power_w is not None:
         # never more than the solar production (guards against a wrong sensor choice)

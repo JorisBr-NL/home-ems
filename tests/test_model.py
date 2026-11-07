@@ -292,3 +292,11 @@ def test_surplus_is_never_more_than_the_solar_production():
     i = Inputs(heat_pump_power_w=1800.0, flow_temp=21.0, living_temp=19.5, grid_power_w=900.0,
                pv_power_w=700.0)
     assert evaluate(i, RunTracker(), at(12)).pv_surplus_w == 700
+
+
+def test_battery_charging_counts_as_surplus_and_discharging_does_not():
+    base = dict(heat_pump_power_w=5.0, flow_temp=21.0, living_temp=19.5, grid_power_w=0.0)
+    # batteries hold the meter at zero while charging 800 W: 800 W the heat pump could use
+    assert evaluate(Inputs(**base, battery_charge_w=800.0), RunTracker(), at(12)).pv_surplus_w == 800
+    # discharging: no surplus
+    assert evaluate(Inputs(**base, battery_charge_w=-500.0), RunTracker(), at(12)).pv_surplus_w == 0

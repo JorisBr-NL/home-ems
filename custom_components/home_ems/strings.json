@@ -12,7 +12,9 @@
           "flow_rate": "Flowmeter flow rate",
           "grid_power": "Grid power (positive = import, negative = export)",
           "outside_temperature": "Outside temperature",
-          "chill_climate": "Quatt Chill"
+          "chill_climate": "Quatt Chill",
+          "battery_power": "Battery power (one or more sensors, optional)",
+          "battery_charge_positive": "Battery power: positive = charging"
         }
       },
       "reconfigure": {
@@ -26,7 +28,9 @@
           "flow_rate": "Flowmeter flow rate",
           "grid_power": "Grid power (positive = import, negative = export)",
           "outside_temperature": "Outside temperature",
-          "chill_climate": "Quatt Chill"
+          "chill_climate": "Quatt Chill",
+          "battery_power": "Battery power (one or more sensors, optional)",
+          "battery_charge_positive": "Battery power: positive = charging"
         }
       }
     },
@@ -201,7 +205,7 @@
           "run_headroom_k": "Run ceiling above the comfort setpoint (not on solar)",
           "gap_max_k": "Largest gap setpoint − room (solar or low price)",
           "low_price_eur": "Low price (all-in) for the largest gap, 0 = off",
-          "boost_margin_w": "Solar boost: step the gap up or down beyond this export or import, 0 = off"
+          "boost_margin_w": "Solar boost: step the gap up or down beyond this 5-minute average export or import, 0 = off"
         }
       },
       "control": {

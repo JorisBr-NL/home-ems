@@ -19,7 +19,7 @@ so the room may also cool down slowly while one heat pump runs at its lowest pow
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -45,11 +45,11 @@ class ArbiterSettings:
     # push the room up to the comfort maximum. Runs on solar may go higher (storage).
     run_ceiling: float = 20.0
     # Variable gap, at most gap_max: on solar it follows the grid meter (PvBoost: steps of
-    # boost_step while the export or import is above boost_margin_w, 0 = off); at a price
+    # boost_step while the 5-minute average export or import is above boost_margin_w, 0 = off); at a price
     # at or below low_price (all-in EUR/kWh, 0 = off) it is gap_max at once. With a boost
     # the ceiling is the comfort maximum (heat stored in the house).
     gap_max: float = 0.6
-    boost_margin_w: float = 100.0
+    boost_margin_w: float = 300.0
     boost_step: float = 0.1
     low_price: float = 0.20
 
@@ -71,36 +71,43 @@ class Target:
 class PvBoost:
     """Extra gap on solar, steered by the grid meter (K above the normal gap).
 
-    While power flows out (export above the margin) the extra gap goes up one step, while
-    power comes in (import above the margin) it goes down one step, at most one step per
-    `interval` so the heat pump has time to respond. Within the margin it stays. At rest
-    without export it is 0 at once. The surplus is not used here: it includes what the
-    heat pump already takes, and running harder on that only pulls power from the grid.
+    `grid_w` is the grid power minus what the batteries charge (positive = import): power
+    going into the batteries could also go into the heat pump, and heat in the house comes
+    first (COP ~5 against ~12% battery losses). Every `interval` the average of the
+    readings since the last step decides: above the margin going out, the extra gap goes
+    up one step; above the margin coming in, one step down; within the margin it stays.
+    The average keeps a cooker or a kettle from moving the gap. At rest without export it
+    is 0 at once. The surplus is not used here: it includes what the heat pump already
+    takes, and running harder on that only pulls power from the grid.
     """
 
     extra: float = 0.0
-    changed: datetime | None = None
+    decided: datetime | None = None
+    samples: list[float] = field(default_factory=list)
+
+    def reset(self) -> float:
+        self.extra, self.decided, self.samples = 0.0, None, []
+        return self.extra
 
     def update(self, grid_w: float | None, running: bool | None, now: datetime,
                interval: timedelta, s: ArbiterSettings) -> float:
         top = max(0.0, s.gap_max - s.hold_offset)
         if s.boost_margin_w <= 0 or grid_w is None or top == 0:
-            self.extra, self.changed = 0.0, None
+            return self.reset()
+        if not running and grid_w >= -s.boost_margin_w:
+            return self.reset()
+        self.samples.append(grid_w)
+        if self.decided is None:
+            self.decided = now
             return self.extra
-        exporting = grid_w < -s.boost_margin_w
-        if not running and not exporting:
-            self.extra, self.changed = 0.0, None
+        if now - self.decided < interval:
             return self.extra
-        if self.changed is not None and now - self.changed < interval:
-            return self.extra
-        new = self.extra
-        if exporting:
-            new = min(top, self.extra + s.boost_step)
-        elif grid_w > s.boost_margin_w:
-            new = max(0.0, self.extra - s.boost_step)
-        new = round(new, 2)
-        if new != self.extra:
-            self.extra, self.changed = new, now
+        average = sum(self.samples) / len(self.samples)
+        self.samples, self.decided = [], now
+        if average < -s.boost_margin_w:
+            self.extra = round(min(top, self.extra + s.boost_step), 2)
+        elif average > s.boost_margin_w:
+            self.extra = round(max(0.0, self.extra - s.boost_step), 2)
         return self.extra
 
 

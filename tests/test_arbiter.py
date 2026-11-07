@@ -157,23 +157,29 @@ def test_boost_function():
     assert arbiter.boost(0.0, None, s) == (None, 0.0)
 
 
-def test_pv_boost_follows_the_grid_meter():
+def test_pv_boost_follows_the_five_minute_average_of_the_grid_meter():
     from datetime import datetime, timedelta
-    s = arbiter.ArbiterSettings(gap_max=0.6, boost_margin_w=100)
+    s = arbiter.ArbiterSettings(gap_max=0.6, boost_margin_w=300)
     b = arbiter.PvBoost()
     t0 = datetime(2026, 11, 10, 12, 0)
     five = timedelta(minutes=5)
-    m = lambda n: t0 + timedelta(minutes=n)
-    assert b.update(-600, True, m(0), five, s) == 0.1     # exporting: one step up
-    assert b.update(-600, True, m(2), five, s) == 0.1     # wait for the interval
-    assert b.update(-600, True, m(5), five, s) == 0.2
-    assert b.update(50, True, m(10), five, s) == 0.2      # within the margin: stays
-    assert b.update(900, True, m(15), five, s) == 0.1     # importing: one step down
-    assert b.update(900, True, m(20), five, s) == 0.0
-    assert b.update(900, True, m(25), five, s) == 0.0     # never below the normal gap
-    for n in range(30, 80, 5):
-        b.update(-2000, True, m(n), five, s)
-    assert b.extra == 0.5                                  # at most gap_max - hold offset
-    assert b.update(300, False, m(80), five, s) == 0.0     # at rest without export: 0 at once
+    minute = [0]
+
+    def feed(readings, running=True):
+        for w in readings:
+            b.update(w, running, t0 + timedelta(minutes=minute[0]), five, s)
+            minute[0] += 1
+        return b.extra
+
+    assert feed([-600] * 5) == 0.0          # first five minutes: averaging, no step yet
+    assert feed([-600]) == 0.1              # average 600 W out: one step up
+    assert feed([-600] * 5) == 0.2
+    # a kettle for one minute (+2000 W) within a sunny five minutes: average -80 W, stays
+    assert feed([-600, 2000, -600, -600, -600]) == 0.2
+    assert feed([800] * 5) == 0.1           # importing on average: one step down
+    assert feed([800] * 5) == 0.0
+    assert feed([800] * 5) == 0.0           # never below the normal gap
+    assert feed([-2000] * 60) == 0.5        # at most gap_max - hold offset
+    assert feed([0], running=False) == 0.0  # at rest without export: 0 at once
     off = arbiter.ArbiterSettings(boost_margin_w=0)
-    assert arbiter.PvBoost(extra=0.3).update(-2000, True, m(0), five, off) == 0.0
+    assert arbiter.PvBoost(extra=0.3).update(-2000, True, t0, five, off) == 0.0

@@ -20,6 +20,8 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     BEDROOM_DEFAULTS,
+    CONF_BATTERY_CHARGE_POSITIVE,
+    CONF_BATTERY_POWER,
     CONF_FLOW_RATE,
     CONF_FLOW_TEMPERATURE,
     CONF_GRID_POWER,
@@ -258,7 +260,17 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             kitchen_temp=self._climate_temperature(data.get(CONF_KITCHEN_CLIMATE)),
             flow_rate_lph=self._float_state(data.get(CONF_FLOW_RATE)),
             pv_power_w=self._pv_power(),
+            battery_charge_w=self._battery_charge(),
         )
+
+    def _battery_charge(self) -> float:
+        """What the batteries charge now (W, + = charging, - = discharging); 0 without them."""
+        data = self.config_entry.data
+        entities = data.get(CONF_BATTERY_POWER) or []
+        entities = [entities] if isinstance(entities, str) else entities
+        known = [v for v in (self._float_state(e) for e in entities) if v is not None]
+        sign = 1.0 if data.get(CONF_BATTERY_CHARGE_POSITIVE, True) else -1.0
+        return sign * sum(known)
 
     def _pv_power(self) -> float | None:
         """Solar production now: the sum of the inverter sensors, None if not all known."""
@@ -283,7 +295,10 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             except Exception:  # the overview must never stop the advice and the planner
                 _LOGGER.exception("Could not build the energy overview")
         self._price_now = inputs.price_now
-        self.pv_boost.update(inputs.grid_power_w, evaluation.heat_pump_running, now,
+        # the batteries charging is power the heat pump could use (heat comes first)
+        signal = (inputs.grid_power_w - inputs.battery_charge_w
+                  if inputs.grid_power_w is not None else None)
+        self.pv_boost.update(signal, evaluation.heat_pump_running, now,
                              timedelta(minutes=float(self.option(OPT_WRITE_INTERVAL))),
                              self.arbiter_settings())
         self.target = self._target(evaluation, inputs.living_temp, now)
