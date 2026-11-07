@@ -234,3 +234,25 @@ def test_cold_day_becomes_one_long_run():
     prices = {h: 0.25 + 0.01 * (h % 5) for h in range(24)}
     p = planner.plan(day(prices, temp=0.0), T0, S)
     assert len(p.runs) == 1 and p.run_hours >= 23
+
+
+def test_a_run_in_progress_stays_when_the_plan_is_made_again():
+    # replanning every 5 minutes must not drop a run that started a quarter ago
+    prices = {h: 0.30 for h in range(24)} | {h: 0.20 for h in (2, 3, 4)}
+    s = planner.PlannerSettings(horizon=timedelta(hours=24), max_gap=timedelta(hours=24),
+                                heat_base_kwh_day=0.0, heat_per_dh=0.0)
+    s = planner.PlannerSettings(**{**s.__dict__, "heat_base_kwh_day": 2 * s.heat_rate_kw})
+    slots = day(prices, temp=20.0)
+    first = planner.plan(slots, T0 + timedelta(hours=2), s)
+    run = first.runs[0]
+    assert run.start == T0 + timedelta(hours=2)
+    later = T0 + timedelta(hours=2, minutes=20)
+    again = planner.plan(slots, later, s, keep_until=run.end)
+    assert again.running_now(later) and again.runs[0].end >= run.end
+    # every 5 minutes through the run: it never drops out
+    now, keep = T0 + timedelta(hours=2), None
+    while now < run.end:
+        p = planner.plan(slots, now, s, keep_until=keep)
+        assert p.running_now(now), now
+        current = next(r for r in p.runs if r.start <= now < r.end)
+        keep, now = current.end, now + timedelta(minutes=5)

@@ -203,8 +203,15 @@ def state_heat(living_temp: float | None, s: PlannerSettings) -> float:
 
 
 def plan(slots: list[Slot], now: datetime, s: PlannerSettings | None = None,
-         last_run_end: datetime | None = None, living_temp: float | None = None) -> Plan | None:
-    """Plan runs from `now` until the end of the horizon (or of the price data)."""
+         last_run_end: datetime | None = None, living_temp: float | None = None,
+         keep_until: datetime | None = None) -> Plan | None:
+    """Plan runs from `now` until the end of the horizon (or of the price data).
+
+    `keep_until`: end of a run that is in progress (from the previous plan). Its quarters
+    stay in the plan and count towards the heat need; the rest is planned after it. The
+    plan is made again every few minutes, and without this a run in progress would drop
+    out of the plan as soon as its first quarter had passed (stop after the minimum run
+    time, start again a bit later)."""
     s = s or PlannerSettings()
     end = now + s.horizon
     slots = sorted((x for x in slots if x.start + QUARTER > now and x.start < end),
@@ -223,6 +230,10 @@ def plan(slots: list[Slot], now: datetime, s: PlannerSettings | None = None,
     season_need = heat_need(slots, s)
     state = state_heat(living_temp, s) if season_need > 0 else 0.0   # only in the heating season
     need = max(0.0, season_need + state)
+    kept = 0
+    if keep_until is not None:
+        kept = sum(1 for c in costs if c.slot.start < keep_until)
+        need = max(0.0, need - s.heat_rate_kw * kept * QUARTER.total_seconds() / 3600)
     per_block = round(s.block / QUARTER)
     blocks_needed = math.ceil(need / (s.heat_rate_kw * s.block.total_seconds() / 3600) - 1e-9)
 
@@ -230,7 +241,7 @@ def plan(slots: list[Slot], now: datetime, s: PlannerSettings | None = None,
         return all(costs[i + k].slot.start == costs[i].slot.start + k * QUARTER
                    for k in range(per_block))
 
-    starts = [i for i in range(len(costs) - per_block + 1) if contiguous(i)]
+    starts = [i for i in range(kept, len(costs) - per_block + 1) if contiguous(i)]
 
     def block_cost(i: int) -> float:
         return sum(c.cost_per_kwh_heat for c in costs[i:i + per_block]) / per_block
@@ -250,7 +261,7 @@ def plan(slots: list[Slot], now: datetime, s: PlannerSettings | None = None,
 
     # comfort: no gap longer than max_gap, counted from the last run (or now); only
     # when there is heat demand at all, so not in summer
-    previous = last_run_end or now
+    previous = keep_until if kept else (last_run_end or now)
     while season_need > 0:   # also when stored heat covers the need, as a safety net
         runs_sorted = sorted(chosen)
         gap_start, gap_end = previous, None
@@ -272,7 +283,7 @@ def plan(slots: list[Slot], now: datetime, s: PlannerSettings | None = None,
         chosen.append(best)
         reasons[best] = "max_gap"
 
-    runs = _merge(sorted(chosen), costs, per_block, reasons, s)
+    runs = _merge(sorted(chosen), costs, per_block, reasons, s, kept)
     avg_cost_heat = sum(c.cost_per_kwh_heat for c in costs) / len(costs)
     planned_heat = sum(r.heat_kwh for r in runs)
     return Plan(made=now, horizon_end=slots[-1].start + QUARTER, heat_need_kwh=round(need, 2),
@@ -283,11 +294,11 @@ def plan(slots: list[Slot], now: datetime, s: PlannerSettings | None = None,
 
 
 def _merge(chosen: list[int], costs: list[SlotCost], per_block: int, reasons: dict[int, str],
-           s: PlannerSettings) -> list[PlannedRun]:
+           s: PlannerSettings, kept: int = 0) -> list[PlannedRun]:
     """Chosen blocks to runs: adjacent quarters join, and pauses shorter than `min_pause`
     between runs are filled (only between contiguous quarters)."""
     hours = QUARTER.total_seconds() / 3600
-    quarters_on = {q for i in chosen for q in range(i, i + per_block)}
+    quarters_on = {q for i in chosen for q in range(i, i + per_block)} | set(range(kept))
     block_reason = {q: reasons.get(i) for i in chosen for q in range(i, i + per_block)}
     pause = round(s.min_pause / QUARTER)
     ordered = sorted(quarters_on)

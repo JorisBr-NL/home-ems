@@ -12,9 +12,9 @@ Runs stay below a ceiling (comfort setpoint + headroom), except on solar surplus
 Runs are started and held with a setpoint just above the room, because tado modulates
 on that gap (small gap = low compressor speed = higher COP). With solar surplus or a low
 price the gap grows, so the heat pump runs harder and stores the cheap energy as heat in
-the house; otherwise it stays small and the heat pump runs gently. While the current setpoint
-still asks for heat with such a small gap, it is kept, so the thermostat is not rewritten
-for every 0.1 C the room warms up.
+the house; otherwise it stays small and the heat pump runs gently. During a run the
+setpoint follows the room up and down (room + hold offset), so the room may also cool down
+slowly while one heat pump runs at its lowest power.
 """
 from __future__ import annotations
 
@@ -35,8 +35,9 @@ class ArbiterSettings:
     # asks for heat as a safety net and the EMS decides when runs happen.
     idle_setpoint: float = 18.0
     # keep the current setpoint during a run while it is above the room and at most this
-    # far above the wanted value
-    keep_band: float = 0.2
+    # far above the wanted value (0 = the setpoint follows the room up and down, so the
+    # gap stays small and the heat pump runs at low power)
+    keep_band: float = 0.0
     # Highest setpoint for a run that is not on solar (comfort setpoint + headroom). The
     # setpoint follows the room up during a run; without a ceiling a long run would
     # push the room up to the comfort maximum. Runs on solar may go higher (storage).

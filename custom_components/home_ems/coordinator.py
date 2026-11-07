@@ -426,7 +426,10 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             self.plan, self.plan_status = None, PLAN_NO_PRICES
             return
         living = self._climate_temperature(self.config_entry.data.get(CONF_LIVING_CLIMATE))
-        self.plan = plan(slots, now, self.planner_settings(), self.tracker.last_run_end, living)
+        # a run in progress stays in the plan until its planned end
+        current = next((r for r in self.plan.runs if r.start <= now < r.end), None) if self.plan else None
+        self.plan = plan(slots, now, self.planner_settings(), self.tracker.last_run_end, living,
+                         keep_until=current.end if current else None)
         self.plan_status = PLAN_OK if self._temps else PLAN_NO_TEMPERATURES
 
     async def _async_refresh_temperatures(self, now: datetime) -> None:
