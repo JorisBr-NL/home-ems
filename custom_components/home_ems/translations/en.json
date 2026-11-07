@@ -199,9 +199,9 @@
           "gas_price_entity": "Gas price sensor (Jeroen.nl, all-in per m³)",
           "min_pause_hours": "Shortest pause between planned runs (shorter pauses are filled)",
           "run_headroom_k": "Run ceiling above the comfort setpoint (not on solar)",
-          "gap_max_k": "Largest gap setpoint − room (solar surplus or low price)",
-          "full_surplus_w": "Solar surplus for the largest gap",
-          "low_price_eur": "Low price (all-in) for the largest gap, 0 = off"
+          "gap_max_k": "Largest gap setpoint − room (solar or low price)",
+          "low_price_eur": "Low price (all-in) for the largest gap, 0 = off",
+          "boost_margin_w": "Solar boost: step the gap up or down beyond this export or import, 0 = off"
         }
       },
       "control": {

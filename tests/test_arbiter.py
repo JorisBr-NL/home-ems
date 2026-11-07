@@ -58,8 +58,11 @@ def test_planner_starts_and_holds_runs():
 
 def test_run_on_solar_is_held_while_exporting():
     t = target(ev(Advice.RUNNING, running=True, surplus=400.0), living=19.5)
-    # 400 W of 1500 W: gap 0.1 + 0.27 x (0.6 - 0.1) = 0.23
-    assert (t.setpoint, t.source, t.boost) == (19.7, "pv", "solar surplus")
+    # no extra gap from the grid meter yet: the normal small gap
+    assert (t.setpoint, t.source, t.boost) == (19.6, "pv", None)
+    t = arbiter.target_setpoint(ev(Advice.RUNNING, running=True, surplus=400.0), 19.5, False,
+                                pv_extra=0.2)
+    assert (t.setpoint, t.source, t.boost, t.boost_k) == (19.8, "pv", "solar surplus", 0.2)
 
 
 def test_idle_goes_to_the_comfort_minimum():
@@ -111,18 +114,18 @@ def test_runs_stay_below_the_ceiling_except_on_solar():
     assert arbiter.target_setpoint(run, 19.6, True, settings=s, current_setpoint=20.4).setpoint == 19.7
     # on solar surplus the heat may go into the house up to the comfort maximum
     pv = ev(Advice.RUNNING, running=True, surplus=500.0)
-    assert arbiter.target_setpoint(pv, 20.3, False, settings=s).setpoint == 20.6
+    assert arbiter.target_setpoint(pv, 20.3, False, settings=s, pv_extra=0.2).setpoint == 20.6
 
 
-def test_gap_grows_with_solar_surplus():
-    s = arbiter.ArbiterSettings(gap_max=0.6, full_surplus_w=1500, low_price=0)
-    run = lambda w: ev(Advice.RUNNING, running=True, surplus=w)
-    assert arbiter.target_setpoint(run(0), 19.0, True, settings=s).setpoint == 19.1     # no surplus: small gap
-    t = arbiter.target_setpoint(run(1500), 19.0, True, settings=s)
-    assert (t.setpoint, t.boost, t.boost_factor) == (19.6, "solar surplus", 1.0)
-    assert arbiter.target_setpoint(run(3000), 19.0, True, settings=s).setpoint == 19.6  # capped at gap_max
+def test_gap_grows_with_the_extra_gap_from_the_grid_meter():
+    s = arbiter.ArbiterSettings(gap_max=0.6, low_price=0)
+    run = ev(Advice.RUNNING, running=True)
+    assert arbiter.target_setpoint(run, 19.0, True, settings=s).setpoint == 19.1     # no extra: small gap
+    t = arbiter.target_setpoint(run, 19.0, True, settings=s, pv_extra=0.5)
+    assert (t.setpoint, t.boost, t.boost_k) == (19.6, "solar surplus", 0.5)
+    assert arbiter.target_setpoint(run, 19.0, True, settings=s, pv_extra=2.0).setpoint == 19.6  # capped
     # the ceiling for boosted runs is the comfort maximum, not the run ceiling
-    assert arbiter.target_setpoint(run(1500), 19.9, True, settings=s).setpoint == 20.5
+    assert arbiter.target_setpoint(run, 19.9, True, settings=s, pv_extra=0.5).setpoint == 20.5
 
 
 def test_low_price_gives_the_largest_gap():
@@ -142,7 +145,29 @@ def test_no_boost_on_idle():
 
 
 def test_boost_function():
-    s = arbiter.ArbiterSettings(full_surplus_w=1000, low_price=0.2)
-    assert arbiter.boost(500, 0.3, s) == (0.5, "solar surplus")
-    assert arbiter.boost(500, 0.1, s) == (1.0, "low price")
-    assert arbiter.boost(None, None, s) == (0.0, None)
+    s = arbiter.ArbiterSettings(low_price=0.2)
+    assert arbiter.boost(0.3, 0.3, s) == ("solar surplus", 0.3)
+    assert arbiter.boost(0.3, 0.1, s) == ("low price", 0.0)
+    assert arbiter.boost(0.0, None, s) == (None, 0.0)
+
+
+def test_pv_boost_follows_the_grid_meter():
+    from datetime import datetime, timedelta
+    s = arbiter.ArbiterSettings(gap_max=0.6, boost_margin_w=100)
+    b = arbiter.PvBoost()
+    t0 = datetime(2026, 11, 10, 12, 0)
+    five = timedelta(minutes=5)
+    m = lambda n: t0 + timedelta(minutes=n)
+    assert b.update(-600, True, m(0), five, s) == 0.1     # exporting: one step up
+    assert b.update(-600, True, m(2), five, s) == 0.1     # wait for the interval
+    assert b.update(-600, True, m(5), five, s) == 0.2
+    assert b.update(50, True, m(10), five, s) == 0.2      # within the margin: stays
+    assert b.update(900, True, m(15), five, s) == 0.1     # importing: one step down
+    assert b.update(900, True, m(20), five, s) == 0.0
+    assert b.update(900, True, m(25), five, s) == 0.0     # never below the normal gap
+    for n in range(30, 80, 5):
+        b.update(-2000, True, m(n), five, s)
+    assert b.extra == 0.5                                  # at most gap_max - hold offset
+    assert b.update(300, False, m(80), five, s) == 0.0     # at rest without export: 0 at once
+    off = arbiter.ArbiterSettings(boost_margin_w=0)
+    assert arbiter.PvBoost(extra=0.3).update(-2000, True, m(0), five, off) == 0.0

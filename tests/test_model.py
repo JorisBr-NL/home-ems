@@ -286,3 +286,9 @@ def test_surplus_counts_what_the_running_heat_pump_uses():
     assert evaluate(inputs(power=800.0, grid=900.0), RunTracker(), at(12)).pv_surplus_w == 0
     # at rest only the export counts (standby power is not added)
     assert evaluate(inputs(power=5.0, grid=-200.0), RunTracker(), at(12)).pv_surplus_w == 200
+
+
+def test_surplus_is_never_more_than_the_solar_production():
+    i = Inputs(heat_pump_power_w=1800.0, flow_temp=21.0, living_temp=19.5, grid_power_w=900.0,
+               pv_power_w=700.0)
+    assert evaluate(i, RunTracker(), at(12)).pv_surplus_w == 700
