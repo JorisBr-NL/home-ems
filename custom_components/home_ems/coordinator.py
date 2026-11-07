@@ -43,8 +43,11 @@ from .const import (
     OPT_EXPENSIVE_SHARE,
     OPT_EXPORT_DIR,
     OPT_FLOOR_MIN_MARGIN,
+    OPT_FULL_SURPLUS,
+    OPT_GAP_MAX,
     OPT_FLOOR_RULE_BAND,
     OPT_GAS_ENTITY,
+    OPT_LOW_PRICE,
     OPT_MAX_GAP,
     OPT_MIN_PAUSE,
     OPT_MIN_RUN,
@@ -154,6 +157,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         # arbiter in shadow mode: the setpoint it would write, and the EMS on/off switch
         self.target: Target | None = None
         self.enabled = True
+        self._price_now: float | None = None
         # executor (v0.6): writes the target to the living room thermostat, off by default
         self.control = False
         self.executor = ExecutorState()
@@ -268,6 +272,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
                 await self._async_refresh_overview(now)
             except Exception:  # the overview must never stop the advice and the planner
                 _LOGGER.exception("Could not build the energy overview")
+        self._price_now = inputs.price_now
         self.target = self._target(evaluation, inputs.living_temp, now)
         self._curtail(inputs, now)
         await self._async_execute(now)
@@ -281,13 +286,16 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
                                comfort_max=float(self.option(OPT_COMFORT_MAX)),
                                run_ceiling=float(self.option(OPT_COMFORT_SETPOINT))
                                + float(self.option(OPT_RUN_HEADROOM)),
+                               gap_max=float(self.option(OPT_GAP_MAX)),
+                               full_surplus_w=float(self.option(OPT_FULL_SURPLUS)),
+                               low_price=float(self.option(OPT_LOW_PRICE)),
                                idle_setpoint=comfort_min)
 
     def _target(self, evaluation: Evaluation, living_temp: float | None, now: datetime) -> Target:
         plan_now = bool(self.plan and self.plan.running_now(now))
         args = (evaluation, living_temp, plan_now, self.enabled, self.arbiter_settings(),
                 self.current_setpoint())
-        target = target_setpoint(*args)
+        target = target_setpoint(*args, price_now=self._price_now)
         rooms = self.bedrooms() if self.enabled else []
         if not rooms:
             self.room_targets = []
@@ -296,7 +304,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         temps = {r.entity_id: self._climate_temperature(r.entity_id) for r in rooms}
         self.room_targets = room_targets(rooms, temps, now, flowing, self.bedroom_settings())
         if any(r.needs_run for r in self.room_targets):
-            target = target_setpoint(*args, bedroom_call=True)
+            target = target_setpoint(*args, bedroom_call=True, price_now=self._price_now)
         return target
 
     def bedrooms(self) -> list[Bedroom]:

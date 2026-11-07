@@ -58,7 +58,8 @@ def test_planner_starts_and_holds_runs():
 
 def test_run_on_solar_is_held_while_exporting():
     t = target(ev(Advice.RUNNING, running=True, surplus=400.0), living=19.5)
-    assert (t.setpoint, t.source) == (19.6, "pv")
+    # 400 W of 1500 W: gap 0.1 + 0.27 x (0.6 - 0.1) = 0.23
+    assert (t.setpoint, t.source, t.boost) == (19.7, "pv", "solar surplus")
 
 
 def test_idle_goes_to_the_comfort_minimum():
@@ -110,4 +111,38 @@ def test_runs_stay_below_the_ceiling_except_on_solar():
     assert arbiter.target_setpoint(run, 19.6, True, settings=s, current_setpoint=20.4).setpoint == 19.7
     # on solar surplus the heat may go into the house up to the comfort maximum
     pv = ev(Advice.RUNNING, running=True, surplus=500.0)
-    assert arbiter.target_setpoint(pv, 20.3, False, settings=s).setpoint == 20.4
+    assert arbiter.target_setpoint(pv, 20.3, False, settings=s).setpoint == 20.6
+
+
+def test_gap_grows_with_solar_surplus():
+    s = arbiter.ArbiterSettings(gap_max=0.6, full_surplus_w=1500, low_price=0)
+    run = lambda w: ev(Advice.RUNNING, running=True, surplus=w)
+    assert arbiter.target_setpoint(run(0), 19.0, True, settings=s).setpoint == 19.1     # no surplus: small gap
+    t = arbiter.target_setpoint(run(1500), 19.0, True, settings=s)
+    assert (t.setpoint, t.boost, t.boost_factor) == (19.6, "solar surplus", 1.0)
+    assert arbiter.target_setpoint(run(3000), 19.0, True, settings=s).setpoint == 19.6  # capped at gap_max
+    # the ceiling for boosted runs is the comfort maximum, not the run ceiling
+    assert arbiter.target_setpoint(run(1500), 19.9, True, settings=s).setpoint == 20.5
+
+
+def test_low_price_gives_the_largest_gap():
+    s = arbiter.ArbiterSettings(gap_max=0.6, low_price=0.20)
+    plan = ev(Advice.WAIT)
+    t = arbiter.target_setpoint(plan, 19.0, True, settings=s, price_now=0.18)
+    assert (t.setpoint, t.source, t.boost) == (19.6, "planner", "low price")
+    assert arbiter.target_setpoint(plan, 19.0, True, settings=s, price_now=0.30).setpoint == 19.2
+    off = arbiter.ArbiterSettings(low_price=0)
+    assert arbiter.target_setpoint(plan, 19.0, True, settings=off, price_now=0.05).setpoint == 19.2
+
+
+def test_no_boost_on_idle():
+    s = arbiter.ArbiterSettings(low_price=0.20)
+    t = arbiter.target_setpoint(ev(Advice.WAIT), 19.0, False, settings=s, price_now=0.10)
+    assert (t.source, t.setpoint, t.boost) == ("idle", 18.0, None)
+
+
+def test_boost_function():
+    s = arbiter.ArbiterSettings(full_surplus_w=1000, low_price=0.2)
+    assert arbiter.boost(500, 0.3, s) == (0.5, "solar surplus")
+    assert arbiter.boost(500, 0.1, s) == (1.0, "low price")
+    assert arbiter.boost(None, None, s) == (0.0, None)

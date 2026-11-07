@@ -10,7 +10,9 @@ fixed order of priority:
 Runs stay below a ceiling (comfort setpoint + headroom), except on solar surplus.
 
 Runs are started and held with a setpoint just above the room, because tado modulates
-on that gap (small gap = low compressor speed = higher COP). While the current setpoint
+on that gap (small gap = low compressor speed = higher COP). With solar surplus or a low
+price the gap grows, so the heat pump runs harder and stores the cheap energy as heat in
+the house; otherwise it stays small and the heat pump runs gently. While the current setpoint
 still asks for heat with such a small gap, it is kept, so the thermostat is not rewritten
 for every 0.1 C the room warms up.
 """
@@ -39,22 +41,44 @@ class ArbiterSettings:
     # setpoint follows the room up during a run; without a ceiling a long run would
     # push the room up to the comfort maximum. Runs on solar may go higher (storage).
     run_ceiling: float = 20.0
+    # Variable gap: from the offsets above up to gap_max, in proportion to the solar
+    # surplus (full at full_surplus_w) or fully at a price at or below low_price (all-in
+    # EUR/kWh, 0 = off). With a boost the ceiling is the comfort maximum (heat stored).
+    gap_max: float = 0.6
+    full_surplus_w: float = 1500.0
+    low_price: float = 0.20
 
 
 @dataclass(frozen=True)
 class Target:
     setpoint: float | None   # None = the EMS has no target (off or no data)
-    source: str              # off, unknown, comfort_min, floor, keep_running, planner, pv, idle
+    source: str              # off, unknown, comfort_min, floor, keep_running, bedroom, planner, pv, idle
     reason: str
+    boost: str | None = None  # "solar surplus" or "low price" when the gap was raised
+    boost_factor: float = 0.0
 
     def differs_from(self, current: float | None) -> bool:
         """True when writing the target would change the thermostat (0.1 C steps)."""
         return self.setpoint is not None and (current is None or abs(self.setpoint - current) >= 0.05)
 
 
+def boost(surplus_w: float | None, price_now: float | None,
+          s: ArbiterSettings) -> tuple[float, str | None]:
+    """How far to raise the gap (0..1) and why: solar surplus scales, a low price is full."""
+    pv = (min(1.0, max(0.0, (surplus_w or 0.0) / s.full_surplus_w))
+          if s.full_surplus_w > 0 else 0.0)
+    cheap = 1.0 if s.low_price > 0 and price_now is not None and price_now <= s.low_price else 0.0
+    if cheap > 0 and cheap >= pv:
+        return cheap, "low price"
+    if pv > 0:
+        return pv, "solar surplus"
+    return 0.0, None
+
+
 def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_now: bool,
                     enabled: bool = True, settings: ArbiterSettings | None = None,
-                    current_setpoint: float | None = None, bedroom_call: bool = False) -> Target:
+                    current_setpoint: float | None = None, bedroom_call: bool = False,
+                    price_now: float | None = None) -> Target:
     s = settings or ArbiterSettings()
     if not enabled:
         return Target(None, "off", "EMS switched off: the thermostat schedule leads")
@@ -73,34 +97,46 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
             return current_setpoint
         return value
 
-    start = keep(clamp(living_temp + s.start_offset, s.run_ceiling), s.run_ceiling)
-    hold = keep(clamp(living_temp + s.hold_offset, s.run_ceiling), s.run_ceiling)
+    factor, why = boost(evaluation.pv_surplus_w, price_now, s)
+
+    def gap(base: float) -> float:
+        return base + factor * max(0.0, s.gap_max - base)
+
+    # with a boost the heat may go up to the comfort maximum (stored in the house)
+    top = s.comfort_max if factor > 0 else s.run_ceiling
+    start = keep(clamp(living_temp + gap(s.start_offset), top), top)
+    hold = keep(clamp(living_temp + gap(s.hold_offset), top), top)
     # on solar surplus up to the comfort maximum: heat stored in the house
-    start_pv = keep(clamp(living_temp + s.start_offset), s.comfort_max)
-    hold_pv = keep(clamp(living_temp + s.hold_offset), s.comfort_max)
+    start_pv = keep(clamp(living_temp + gap(s.start_offset)), s.comfort_max)
+    hold_pv = keep(clamp(living_temp + gap(s.hold_offset)), s.comfort_max)
     running = evaluation.heat_pump_running
 
+    def result(setpoint: float, source: str, reason: str) -> Target:
+        if source == "idle":
+            return Target(setpoint, source, reason)
+        return Target(setpoint, source, reason, why, round(factor, 2))
+
     if evaluation.advice == "run" and evaluation.cause == "comfort_min":
-        return Target(start, "comfort_min", evaluation.reason)
+        return result(start, "comfort_min", evaluation.reason)
     if evaluation.advice == "run" and evaluation.cause == "floor":
-        return Target(start, "floor", evaluation.reason)
+        return result(start, "floor", evaluation.reason)
     if evaluation.advice == "keep_running":
-        return Target(hold, "keep_running", "hold the run until the minimum run time")
+        return result(hold, "keep_running", "hold the run until the minimum run time")
     if bedroom_call:
         # warm water only reaches the bedrooms while the living room asks for heat
         if running:
-            return Target(hold, "bedroom", "bedroom below target before bedtime: keep the run going")
-        return Target(start, "bedroom", "bedroom below target before bedtime: short run")
+            return result(hold, "bedroom", "bedroom below target before bedtime: keep the run going")
+        return result(start, "bedroom", "bedroom below target before bedtime: short run")
     if plan_run_now:
         if running:
-            return Target(hold, "planner", "planned run in progress")
-        return Target(start, "planner", "planned run starts")
+            return result(hold, "planner", "planned run in progress")
+        return result(start, "planner", "planned run starts")
     if evaluation.advice == "run" and evaluation.cause == "pv":
-        return Target(start_pv, "pv", evaluation.reason)
+        return result(start_pv, "pv", evaluation.reason)
     if running and evaluation.pv_surplus_w:
         # still exporting while the heat pump runs: a long run on solar is the cheapest heat
-        return Target(hold_pv, "pv", "run on solar surplus: keep it going")
+        return result(hold_pv, "pv", "run on solar surplus: keep it going")
     idle = clamp(s.idle_setpoint)
     if running:
-        return Target(idle, "idle", "run not needed any more: let it stop")
-    return Target(idle, "idle", evaluation.reason)
+        return result(idle, "idle", "run not needed any more: let it stop")
+    return result(idle, "idle", evaluation.reason)
