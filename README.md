@@ -6,7 +6,7 @@ Eigen energiemanagementsysteem voor Home Assistant: stuurt (straks) de Quatt-war
 
 Het ontwerp staat in Obsidian (`Projects/Energie/EMS ontwerp.md`); de analyse waarop de standaardwaarden zijn gebaseerd in `Projects/Energie/Analyse runs en flowmeter.md`.
 
-## Status: versie 0.9.0 – observatie- en schaduwmodus, sturing optioneel
+## Status: versie 0.10.0 – observatie- en schaduwmodus, sturing optioneel
 
 Home EMS leest sensoren uit en laat zien wat het **zou** doen, sinds v0.5 ook welk setpoint het in de woonkamer zou zetten. Sinds v0.6 kan het dat setpoint ook echt schrijven, maar alleen als je de schakelaar *Sturing* aanzet (standaard uit). Zolang die uit staat, schrijft Home EMS niets en blijven je bestaande automatiseringen leidend.
 
@@ -34,6 +34,8 @@ Advies, anti-pendelen en de dagplanner willen allemaal iets van dezelfde thermos
 7. **Rust**: het comfortminimum, zodat de thermostaat zelf alleen nog als vangnet warmte vraagt.
 
 Het setpoint blijft altijd tussen het comfortminimum en -maximum (standaard 18 en 21,5 °C). Een run die niet op zon draait, blijft bovendien onder een plafond: comfortsetpoint + 1 °C (instelbaar, sinds v0.9). Zo blijft een lange run een rustige run op laag vermogen en loopt de woonkamer niet op naar het comfortmaximum; alleen bij zonne-overschot mag de warmte hoger in het huis.
+
+**Variabel gat** (sinds v0.10): het gat tussen setpoint en kamer bepaalt hoe hard de warmtepomp draait. Normaal is het klein (+0,2 °C bij starten, +0,1 °C bij vasthouden): zacht draaien, hoge COP. Bij zonne-overschot groeit het naar verhouding mee (vol bij het ingestelde overschot, standaard 1.500 W) tot het grootste gat (standaard +0,6 °C); onder een lage prijs (all-in, standaard € 0,20/kWh, 0 = uit) meteen het grootste gat. Dan draait de warmtepomp harder en slaat hij de goedkope stroom op als warmte in het huis, tot het comfortmaximum. Omdat de warmtepomp dan meer verbruikt, daalt de teruglevering en wordt het gat vanzelf weer kleiner. Het attribuut `boost` (`solar surplus` / `low price`) en `boost_factor` op *Gewenst setpoint* laten zien wanneer dat gebeurt. Een lage prijs start zelf geen run; dat doet de planner.
 
 | Entiteit | Betekenis |
 |---|---|
@@ -342,7 +344,7 @@ cards:
 
 ### Instellingen (v0.3, v0.4)
 
-Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kies je *Planner en advies*, *Sturing*, *Slaapkamers*, *Aftoppen en witgoed* of *Energie- en kostenoverzicht*. Onder het eerste: de databronnen hierboven, comfortsetpoint, de band voor de vloerregel, minimale vloermarge, PV-overschot voor een run, minimale runtijd, het deel van de dag dat als prijspiek telt (standaard 25%), de langste tijd zonder run, het basisverbruik van het huis, het comfortminimum en -maximum, de warmtecapaciteit van het huis, de kortste pauze tussen runs en het plafond van een run boven het comfortsetpoint. Wijzigingen gelden direct.
+Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kies je *Planner en advies*, *Sturing*, *Slaapkamers*, *Aftoppen en witgoed* of *Energie- en kostenoverzicht*. Onder het eerste: de databronnen hierboven, comfortsetpoint, de band voor de vloerregel, minimale vloermarge, PV-overschot voor een run, minimale runtijd, het deel van de dag dat als prijspiek telt (standaard 25%), de langste tijd zonder run, het basisverbruik van het huis, het comfortminimum en -maximum, de warmtecapaciteit van het huis, de kortste pauze tussen runs, het plafond van een run boven het comfortsetpoint, en het grootste gat met het overschot en de lage prijs waarbij dat geldt. Wijzigingen gelden direct.
 
 ### Energie- en kostenoverzicht (v0.4)
 

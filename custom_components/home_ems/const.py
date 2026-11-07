@@ -39,6 +39,10 @@ OPT_CAPACITY = "capacity_kwh_k"
 # options (v0.9): steady runs in the cold
 OPT_MIN_PAUSE = "min_pause_hours"       # shorter pauses between planned runs are filled
 OPT_RUN_HEADROOM = "run_headroom_k"     # run ceiling = comfort setpoint + this
+# options (v0.10): larger gap with solar surplus or a low price
+OPT_GAP_MAX = "gap_max_k"                # largest gap setpoint - room
+OPT_FULL_SURPLUS = "full_surplus_w"      # surplus at which the gap is largest
+OPT_LOW_PRICE = "low_price_eur"          # all-in price at or below which the gap is largest
 
 OPTION_DEFAULTS = {
     OPT_COMFORT_SETPOINT: 19.0,
@@ -54,6 +58,9 @@ OPTION_DEFAULTS = {
     OPT_CAPACITY: 15.0,
     OPT_MIN_PAUSE: 2.0,
     OPT_RUN_HEADROOM: 1.0,
+    OPT_GAP_MAX: 0.6,
+    OPT_FULL_SURPLUS: 1500,
+    OPT_LOW_PRICE: 0.20,
 }
 
 # options (v0.4): energy and cost overview, sources are long-term statistics
