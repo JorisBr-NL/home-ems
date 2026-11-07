@@ -97,3 +97,17 @@ def test_bedroom_call_starts_or_holds_a_run_after_floor_and_keep_running():
     assert (t.setpoint, t.source) == (19.1, "bedroom")
     assert arbiter.target_setpoint(ev(Advice.RUN, "floor"), 19.0, False, bedroom_call=True).source == "floor"
     assert arbiter.target_setpoint(ev(Advice.WAIT), 19.0, False, enabled=False, bedroom_call=True).source == "off"
+
+
+def test_runs_stay_below_the_ceiling_except_on_solar():
+    s = arbiter.ArbiterSettings(run_ceiling=20.0)
+    t = arbiter.target_setpoint(ev(Advice.RUN, "floor"), 19.95, False, settings=s)
+    assert t.setpoint == 20.0
+    run = ev(Advice.RUNNING, running=True)
+    # planned run: the room reached the ceiling, no higher setpoint
+    assert arbiter.target_setpoint(run, 20.0, True, settings=s, current_setpoint=20.0).setpoint == 20.0
+    # a setpoint above the ceiling (set by hand earlier) is not kept
+    assert arbiter.target_setpoint(run, 19.6, True, settings=s, current_setpoint=20.4).setpoint == 19.7
+    # on solar surplus the heat may go into the house up to the comfort maximum
+    pv = ev(Advice.RUNNING, running=True, surplus=500.0)
+    assert arbiter.target_setpoint(pv, 20.3, False, settings=s).setpoint == 20.4

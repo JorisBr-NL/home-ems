@@ -36,6 +36,9 @@ OPT_BASE_LOAD = "base_load_kw"
 OPT_COMFORT_MIN = "comfort_min"
 OPT_COMFORT_MAX = "comfort_max"
 OPT_CAPACITY = "capacity_kwh_k"
+# options (v0.9): steady runs in the cold
+OPT_MIN_PAUSE = "min_pause_hours"       # shorter pauses between planned runs are filled
+OPT_RUN_HEADROOM = "run_headroom_k"     # run ceiling = comfort setpoint + this
 
 OPTION_DEFAULTS = {
     OPT_COMFORT_SETPOINT: 19.0,
@@ -49,6 +52,8 @@ OPTION_DEFAULTS = {
     OPT_COMFORT_MIN: 18.0,
     OPT_COMFORT_MAX: 21.5,
     OPT_CAPACITY: 15.0,
+    OPT_MIN_PAUSE: 2.0,
+    OPT_RUN_HEADROOM: 1.0,
 }
 
 # options (v0.4): energy and cost overview, sources are long-term statistics

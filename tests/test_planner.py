@@ -206,3 +206,31 @@ def test_heat_is_still_asked_for_when_gas_is_cheaper_everywhere():
     assert p.run_hours * S.heat_rate_kw >= p.heat_need_kwh
     assert all(r.el_kwh == 0 for r in p.runs)
     assert p.expected_cost == pytest.approx(sum(r.heat_kwh for r in p.runs) * gas, rel=1e-3)
+
+
+def test_short_pauses_between_runs_are_filled():
+    # two cheap hours with one dearer hour in between: one run, not stop-and-start
+    prices = {h: 0.40 for h in range(24)} | {10: 0.10, 12: 0.10}
+    s = planner.PlannerSettings(horizon=timedelta(hours=24), max_gap=timedelta(hours=24),
+                                heat_base_kwh_day=0.0, heat_per_dh=0.0)
+    need_two_hours = planner.PlannerSettings(**{**s.__dict__, "heat_base_kwh_day": 2 * s.heat_rate_kw})
+    p = planner.plan(day(prices, temp=20.0), T0, need_two_hours)
+    assert len(p.runs) == 1
+    assert p.runs[0].start == T0 + timedelta(hours=10) and p.runs[0].end == T0 + timedelta(hours=13)
+
+
+def test_long_pauses_stay_and_zero_disables_filling():
+    prices = {h: 0.40 for h in range(24)} | {6: 0.10, 12: 0.10}
+    base = dict(horizon=timedelta(hours=24), max_gap=timedelta(hours=24), heat_per_dh=0.0,
+                heat_base_kwh_day=2 * S.heat_rate_kw)
+    assert len(planner.plan(day(prices, temp=20.0), T0, planner.PlannerSettings(**base)).runs) == 2
+    prices = {h: 0.40 for h in range(24)} | {10: 0.10, 12: 0.10}
+    off = planner.PlannerSettings(**base, min_pause=timedelta(0))
+    assert len(planner.plan(day(prices, temp=20.0), T0, off).runs) == 2
+
+
+def test_cold_day_becomes_one_long_run():
+    # at about 0 C the need fills most of the day: one continuous run, not many short ones
+    prices = {h: 0.25 + 0.01 * (h % 5) for h in range(24)}
+    p = planner.plan(day(prices, temp=0.0), T0, S)
+    assert len(p.runs) == 1 and p.run_hours >= 23
