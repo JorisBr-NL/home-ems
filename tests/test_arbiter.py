@@ -82,10 +82,16 @@ def test_differs_from_current_setpoint():
     assert not target(ev(Advice.WAIT), enabled=False).differs_from(19.0)
 
 
-def test_current_setpoint_is_kept_while_it_still_asks_for_heat():
+def test_setpoint_follows_the_room_during_a_run():
     run = ev(Advice.RUNNING, running=True)
+    t = arbiter.target_setpoint(run, 19.2, True, current_setpoint=19.4)
+    assert (t.setpoint, t.source) == (19.3, "planner")      # room 19.2: back to + 0.1
     t = arbiter.target_setpoint(run, 19.3, True, current_setpoint=19.4)
-    assert (t.setpoint, t.source) == (19.4, "planner")      # room 19.3 < 19.4: no rewrite
+    assert t.setpoint == 19.4                                # already right
+    # with a keep band the current setpoint is kept while it still asks for heat
+    band = arbiter.ArbiterSettings(keep_band=0.2)
+    t = arbiter.target_setpoint(run, 19.3, True, settings=band, current_setpoint=19.5)
+    assert t.setpoint == 19.5
     t = arbiter.target_setpoint(run, 19.4, True, current_setpoint=19.4)
     assert t.setpoint == 19.5                                # room reached it: one step up
     t = arbiter.target_setpoint(run, 19.0, True, current_setpoint=19.6)
