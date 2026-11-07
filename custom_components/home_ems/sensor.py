@@ -79,7 +79,7 @@ def _target_attrs(c: HomeEmsCoordinator) -> dict[str, Any]:
         "current_setpoint": current,
         "would_write": t.differs_from(current) if t else False,
         "boost": t.boost if t else None,
-        "boost_factor": t.boost_factor if t else 0.0,
+        "boost_k": t.boost_k if t else 0.0,
     }
 
 

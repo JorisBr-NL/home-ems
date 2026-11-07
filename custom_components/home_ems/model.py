@@ -66,6 +66,7 @@ class Inputs:
     flow_temp: float | None
     living_temp: float | None
     grid_power_w: float | None  # positive = import, negative = export
+    pv_power_w: float | None = None  # solar production now (sum of the inverters), if known
     price_now: float | None = None          # all-in price of the current quarter
     day_prices: tuple[float, ...] = ()      # all known quarter prices of today
     market_now: float | None = None         # market price of the current quarter
@@ -266,6 +267,9 @@ def evaluate(inputs: Inputs, tracker: RunTracker, now: datetime,
     surplus = (
         max(0.0, own - inputs.grid_power_w) if inputs.grid_power_w is not None else None
     )
+    if surplus is not None and inputs.pv_power_w is not None:
+        # never more than the solar production (guards against a wrong sensor choice)
+        surplus = min(surplus, max(0.0, inputs.pv_power_w))
     peak = is_expensive(inputs.price_now, inputs.day_prices, settings.expensive_share)
 
     def result(advice: Advice, reason: str, cause: str | None = None) -> Evaluation:
