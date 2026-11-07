@@ -81,3 +81,49 @@ def test_missing_data_falls_back_after_a_while():
     # data back: the timer starts again
     assert run(state, 19.4, 19.3, 12).write == 19.4
     assert state.unknown_since is None
+
+
+def test_a_write_that_did_not_arrive_is_retried_then_an_error():
+    state = executor.ExecutorState()
+    state.record_write(19.8, "planner", at(0), before=19.5)
+    # after the settle time the thermostat still shows the value from before: retry
+    action = run(state, 19.8, 19.5, 3)
+    assert (action.write, action.status) == (19.8, "writing")
+    state.record_write(19.8, "planner", at(3), before=19.5)
+    assert run(state, 19.8, 19.5, 6).write == 19.8
+    state.record_write(19.8, "planner", at(6), before=19.5)
+    # retries used up: error and a pause, not a change by hand
+    action = run(state, 19.8, 19.5, 9)
+    assert (action.write, action.status) == (None, "error")
+    assert run(state, 19.8, 19.5, 60).status == "error"
+    assert run(state, 19.8, 19.5, 9 + 120).write == 19.8
+
+
+def test_a_write_that_arrived_resets_the_retries():
+    state = executor.ExecutorState()
+    state.record_write(19.8, "planner", at(0), before=19.5)
+    run(state, 19.8, 19.5, 3)
+    assert state.retries == 1
+    state.record_write(19.8, "planner", at(3), before=19.5)
+    assert run(state, 19.8, 19.8, 6).status == "steady"
+    assert state.retries == 0
+
+
+def test_another_value_is_still_a_change_by_hand():
+    state = executor.ExecutorState()
+    state.record_write(19.8, "planner", at(0), before=19.5)
+    assert run(state, 19.8, 21.0, 3).status == "override"
+
+
+def test_small_changes_wait_for_the_minimum_step_but_start_and_stop_do_not():
+    s = executor.ExecutorSettings(min_step=0.3)
+    state = executor.ExecutorState()
+    state.record_write(19.8, "planner", at(0))
+    step = executor.step
+    # 0.1 lower, still above the room: not written
+    assert step(state, 19.7, "planner", "t", 19.8, at(10), True, s, living=19.5).status == "steady"
+    # 0.2 lower and now below the room (stops the heat demand): written
+    assert step(state, 19.6, "idle", "t", 19.8, at(10), True, s, living=19.7).write == 19.6
+    # without the room temperature only the step counts
+    assert step(state, 19.6, "idle", "t", 19.8, at(10), True, s).status == "steady"
+    assert step(state, 19.4, "idle", "t", 19.8, at(10), True, s).write == 19.4

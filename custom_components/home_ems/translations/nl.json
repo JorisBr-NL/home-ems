@@ -14,10 +14,25 @@
           "outside_temperature": "Buitentemperatuur",
           "chill_climate": "Quatt Chill"
         }
+      },
+      "reconfigure": {
+        "title": "Home EMS: entiteiten wijzigen",
+        "description": "Kies andere entiteiten, bijvoorbeeld de thermostaat waar Home EMS naar schrijft. De opties blijven zoals ze zijn.",
+        "data": {
+          "living_climate": "Thermostaat woonkamer (master)",
+          "kitchen_climate": "Thermostaat keuken",
+          "heat_pump_power": "Elektrisch vermogen warmtepomp (een of meer sensoren)",
+          "flow_temperature": "Flowmetertemperatuur (vloerwater)",
+          "flow_rate": "Debiet flowmeter",
+          "grid_power": "Netvermogen (positief = afname, negatief = teruglevering)",
+          "outside_temperature": "Buitentemperatuur",
+          "chill_climate": "Quatt Chill"
+        }
       }
     },
     "abort": {
-      "already_configured": "Home EMS is al ingesteld."
+      "already_configured": "Home EMS is al ingesteld.",
+      "reconfigure_successful": "De entiteiten zijn gewijzigd."
     }
   },
   "entity": {
@@ -194,7 +209,8 @@
         "description": "Home EMS schrijft het gewenste setpoint naar de thermostaat in de woonkamer zolang de schakelaar 'Sturing (setpoint schrijven)' aan staat (standaard uit). Zet eerst de bestaande warmtepompautomatiseringen en het keukensetpoint uit, zodat maar één partij de thermostaat stuurt.",
         "data": {
           "override_hours": "Pauze na een handmatig gewijzigd setpoint",
-          "write_interval_minutes": "Minimale tijd tussen twee wijzigingen"
+          "write_interval_minutes": "Minimale tijd tussen twee wijzigingen",
+          "write_step_k": "Kleinste wijziging om te schrijven (start en stop altijd)"
         }
       },
       "bedrooms": {

@@ -69,6 +69,7 @@ from .const import (
     OPT_STAT_PV,
     OPT_WEATHER_ENTITY,
     OPT_WRITE_INTERVAL,
+    OPT_WRITE_STEP,
     OVERVIEW_BAD_SETTINGS,
     OVERVIEW_NOT_CONFIGURED,
     OVERVIEW_NO_DATA,
@@ -85,7 +86,7 @@ from .arbiter import ArbiterSettings, Target, target_setpoint
 from .appliances import StartAdvice, best_start, parse_appliances
 from .bedrooms import Bedroom, BedroomSettings, RoomTarget, parse_rooms, room_targets
 from .curtail import CurtailAdvice, CurtailState, advise as curtail_advise
-from .executor import Action, ExecutorSettings, ExecutorState, step
+from .executor import Action, ExecutorSettings, ExecutorState, action_is_retry, step
 from .model import Evaluation, Inputs, RunTracker, Settings, evaluate, prices_today
 from .overview import (
     Usage,
@@ -363,18 +364,23 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             min_interval=timedelta(minutes=float(self.option(OPT_WRITE_INTERVAL))),
             override_hold=timedelta(hours=float(self.option(OPT_OVERRIDE_HOURS))),
             fallback_setpoint=float(self.option(OPT_COMFORT_SETPOINT)),
+            min_step=float(self.option(OPT_WRITE_STEP)),
         )
 
     async def _async_execute(self, now: datetime) -> None:
         target = self.target
         if target is None:
             return
+        current = self.current_setpoint()
+        living = self._climate_temperature(self.config_entry.data.get(CONF_LIVING_CLIMATE))
+        before = self.executor.before if action_is_retry(self.executor, current) else current
         action = step(self.executor, target.setpoint, target.source, target.reason,
-                      self.current_setpoint(), now, self.control, self.executor_settings())
+                      current, now, self.control, self.executor_settings(), living)
         if action.write is not None:
             if await self._async_write(action.write):
                 self.executor.record_write(action.write, target.source, now,
-                                           steering=action.status != "fallback")
+                                           steering=action.status != "fallback",
+                                           before=before)
                 self.tracker.stats.setpoint_writes += 1
             else:
                 action = Action(None, "error", f"could not write {action.write} C")
@@ -399,10 +405,13 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         if not on and not restore and self.executor.last_written is not None:
             fallback = float(self.option(OPT_COMFORT_SETPOINT))
             if await self._async_write(fallback):
-                self.executor.record_write(fallback, "off", dt_util.now(), steering=False)
+                self.executor.record_write(fallback, "off", dt_util.now(), steering=False,
+                                           before=self.current_setpoint())
                 self.tracker.stats.setpoint_writes += 1
         if not on:
             self.executor.override_until = None
+            self.executor.pause_status = "override"
+            self.executor.retries = 0
             self.action = Action(None, "off", "control switched off")
         self.async_update_listeners()
 

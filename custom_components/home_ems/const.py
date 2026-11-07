@@ -105,7 +105,8 @@ afrekening: {}
 # so they are kept apart from OPTION_DEFAULTS, which belong to the planner screen)
 OPT_OVERRIDE_HOURS = "override_hours"            # pause after a setpoint changed by hand
 OPT_WRITE_INTERVAL = "write_interval_minutes"    # minimum time between two changes
-CONTROL_DEFAULTS = {OPT_OVERRIDE_HOURS: 2.0, OPT_WRITE_INTERVAL: 5}
+OPT_WRITE_STEP = "write_step_k"         # smallest change worth writing (start/stop always)
+CONTROL_DEFAULTS = {OPT_OVERRIDE_HOURS: 2.0, OPT_WRITE_INTERVAL: 5, OPT_WRITE_STEP: 0.1}
 CONTROL_OPTIONS = tuple(CONTROL_DEFAULTS)
 
 # options (v0.7): bedrooms (own screen); rooms as YAML, see bedrooms.parse_rooms

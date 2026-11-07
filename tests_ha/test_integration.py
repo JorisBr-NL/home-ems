@@ -160,3 +160,33 @@ async def test_negative_price_shows_which_inverter_would_go_off(hass, freezer):
     curtail = hass.states.get("sensor.home_ems_pv_curtailment_inverters_off")
     assert curtail.state == "1"
     assert curtail.attributes["off"] == ["sensor.inverter_a"]
+
+
+async def test_a_write_that_did_not_arrive_is_retried(recorder_mock, hass, entry):
+    set_house(hass)
+    calls = async_mock_service(hass, "climate", "set_temperature")
+    await _setup(hass, entry)
+    await hass.services.async_call("switch", "turn_on", {"entity_id": CONTROL}, blocking=True)
+    await hass.async_block_till_done()
+    assert [c.data["temperature"] for c in calls] == [19.2]
+
+    # the thermostat still shows 19.0 after the settle time: retry, not a change by hand
+    entry.runtime_data.executor.last_write -= timedelta(minutes=5)
+    await _refresh(hass, entry)
+    assert [c.data["temperature"] for c in calls] == [19.2, 19.2]
+    assert hass.states.get(STATUS).state == "writing"
+
+
+async def test_reconfigure_changes_the_thermostat_and_keeps_the_options(recorder_mock, hass, entry):
+    set_house(hass)
+    await _setup(hass, entry)
+    hass.config_entries.async_update_entry(entry, options={"comfort_setpoint": 19.5})
+    await hass.async_block_till_done()
+
+    result = await entry.start_reconfigure_flow(hass)
+    assert result["type"] is FlowResultType.FORM and result["step_id"] == "reconfigure"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {**DATA, "living_climate": "climate.other_thermostat"})
+    assert result["type"] is FlowResultType.ABORT and result["reason"] == "reconfigure_successful"
+    assert entry.data["living_climate"] == "climate.other_thermostat"
+    assert entry.options["comfort_setpoint"] == 19.5
