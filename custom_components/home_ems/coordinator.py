@@ -306,6 +306,11 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
 
     def _target(self, evaluation: Evaluation, living_temp: float | None, now: datetime) -> Target:
         plan_now = bool(self.plan and self.plan.running_now(now))
+        if not plan_now and evaluation.heat_pump_running and self.plan:
+            # the heat pump runs and the next planned run starts within the shortest pause:
+            # keep going instead of stopping and starting again (after a restart or a
+            # change of the plan, the run in progress may not be in the new plan)
+            plan_now = self.plan.run_soon(now, timedelta(hours=float(self.option(OPT_MIN_PAUSE))))
         args = (evaluation, living_temp, plan_now, self.enabled, self.arbiter_settings(),
                 self.current_setpoint())
         target = target_setpoint(*args, price_now=self._price_now, pv_extra=self.pv_boost.extra)

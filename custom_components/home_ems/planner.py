@@ -124,6 +124,10 @@ class Plan:
     def running_now(self, now: datetime) -> bool:
         return any(r.start <= now < r.end for r in self.runs)
 
+    def run_soon(self, now: datetime, within: timedelta) -> bool:
+        """A planned run starts within `within` from now (not counting one in progress)."""
+        return any(now < r.start <= now + within for r in self.runs)
+
 
 def hour_of(moment: datetime) -> datetime:
     """Start of the hour in UTC (aware datetimes only)."""
