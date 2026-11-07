@@ -181,7 +181,9 @@
           "comfort_min": "Comfortminimum (woonkamer en keuken)",
           "comfort_max": "Comfortmaximum (gewenst setpoint)",
           "capacity_kwh_k": "Warmtecapaciteit van het huis (planner)",
-          "gas_price_entity": "Gasprijssensor (Jeroen.nl, all-in per m³)"
+          "gas_price_entity": "Gasprijssensor (Jeroen.nl, all-in per m³)",
+          "min_pause_hours": "Kortste pauze tussen geplande runs (kortere pauzes worden opgevuld)",
+          "run_headroom_k": "Plafond van een run boven het comfortsetpoint (niet op zon)"
         }
       },
       "control": {

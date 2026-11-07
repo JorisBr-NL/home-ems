@@ -7,6 +7,8 @@ fixed order of priority:
     switched off > comfort minimum > floor > keep running (minimum run time)
     > bedroom below target before bedtime > planner > PV surplus (start, or hold while still exporting) > idle
 
+Runs stay below a ceiling (comfort setpoint + headroom), except on solar surplus.
+
 Runs are started and held with a setpoint just above the room, because tado modulates
 on that gap (small gap = low compressor speed = higher COP). While the current setpoint
 still asks for heat with such a small gap, it is kept, so the thermostat is not rewritten
@@ -33,6 +35,10 @@ class ArbiterSettings:
     # keep the current setpoint during a run while it is above the room and at most this
     # far above the wanted value
     keep_band: float = 0.2
+    # Highest setpoint for a run that is not on solar (comfort setpoint + headroom). The
+    # setpoint follows the room up during a run; without a ceiling a long run would
+    # push the room up to the comfort maximum. Runs on solar may go higher (storage).
+    run_ceiling: float = 20.0
 
 
 @dataclass(frozen=True)
@@ -56,18 +62,22 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
     if evaluation.advice == "unknown" or living_temp is None:
         return Target(None, "unknown", "no heat pump power or living room temperature")
 
-    def clamp(value: float) -> float:
-        return round(min(s.comfort_max, max(s.comfort_min, value)), 1)
+    def clamp(value: float, top: float | None = None) -> float:
+        top = s.comfort_max if top is None else min(top, s.comfort_max)
+        return round(min(top, max(s.comfort_min, value)), 1)
 
-    def keep(value: float) -> float:
+    def keep(value: float, top: float) -> float:
         # the current setpoint still asks for heat with a small gap: leave it as it is
         if (current_setpoint is not None and living_temp < current_setpoint
-                and current_setpoint <= min(value + s.keep_band, s.comfort_max)):
+                and current_setpoint <= min(value + s.keep_band, top, s.comfort_max)):
             return current_setpoint
         return value
 
-    start = keep(clamp(living_temp + s.start_offset))
-    hold = keep(clamp(living_temp + s.hold_offset))
+    start = keep(clamp(living_temp + s.start_offset, s.run_ceiling), s.run_ceiling)
+    hold = keep(clamp(living_temp + s.hold_offset, s.run_ceiling), s.run_ceiling)
+    # on solar surplus up to the comfort maximum: heat stored in the house
+    start_pv = keep(clamp(living_temp + s.start_offset), s.comfort_max)
+    hold_pv = keep(clamp(living_temp + s.hold_offset), s.comfort_max)
     running = evaluation.heat_pump_running
 
     if evaluation.advice == "run" and evaluation.cause == "comfort_min":
@@ -86,10 +96,10 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
             return Target(hold, "planner", "planned run in progress")
         return Target(start, "planner", "planned run starts")
     if evaluation.advice == "run" and evaluation.cause == "pv":
-        return Target(start, "pv", evaluation.reason)
+        return Target(start_pv, "pv", evaluation.reason)
     if running and evaluation.pv_surplus_w:
         # still exporting while the heat pump runs: a long run on solar is the cheapest heat
-        return Target(hold, "pv", "run on solar surplus: keep it going")
+        return Target(hold_pv, "pv", "run on solar surplus: keep it going")
     idle = clamp(s.idle_setpoint)
     if running:
         return Target(idle, "idle", "run not needed any more: let it stop")

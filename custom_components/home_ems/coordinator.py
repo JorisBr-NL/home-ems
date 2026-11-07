@@ -46,12 +46,14 @@ from .const import (
     OPT_FLOOR_RULE_BAND,
     OPT_GAS_ENTITY,
     OPT_MAX_GAP,
+    OPT_MIN_PAUSE,
     OPT_MIN_RUN,
     OPT_OVERRIDE_HOURS,
     OPT_OVERVIEW_FROM,
     OPT_PRICE_ENTITY,
     OPT_PV_POWER,
     OPT_PV_RUN_THRESHOLD,
+    OPT_RUN_HEADROOM,
     OPT_SOLAR_ENTITY,
     OPT_STAT_EV,
     OPT_STAT_EXPORT,
@@ -192,6 +194,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         return PlannerSettings(
             base_load_kw=float(self.option(OPT_BASE_LOAD)),
             max_gap=timedelta(hours=float(self.option(OPT_MAX_GAP))),
+            min_pause=timedelta(hours=float(self.option(OPT_MIN_PAUSE))),
             tz=dt_util.get_default_time_zone(),
             capacity_kwh_k=float(self.option(OPT_CAPACITY)),
             target_temp=float(self.option(OPT_COMFORT_SETPOINT)),
@@ -276,6 +279,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         comfort_min = float(self.option(OPT_COMFORT_MIN))
         return ArbiterSettings(comfort_min=comfort_min,
                                comfort_max=float(self.option(OPT_COMFORT_MAX)),
+                               run_ceiling=float(self.option(OPT_COMFORT_SETPOINT))
+                               + float(self.option(OPT_RUN_HEADROOM)),
                                idle_setpoint=comfort_min)
 
     def _target(self, evaluation: Evaluation, living_temp: float | None, now: datetime) -> Target:

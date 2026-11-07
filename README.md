@@ -6,7 +6,7 @@ Eigen energiemanagementsysteem voor Home Assistant: stuurt (straks) de Quatt-war
 
 Het ontwerp staat in Obsidian (`Projects/Energie/EMS ontwerp.md`); de analyse waarop de standaardwaarden zijn gebaseerd in `Projects/Energie/Analyse runs en flowmeter.md`.
 
-## Status: versie 0.8.1 – observatie- en schaduwmodus, sturing optioneel
+## Status: versie 0.9.0 – observatie- en schaduwmodus, sturing optioneel
 
 Home EMS leest sensoren uit en laat zien wat het **zou** doen, sinds v0.5 ook welk setpoint het in de woonkamer zou zetten. Sinds v0.6 kan het dat setpoint ook echt schrijven, maar alleen als je de schakelaar *Sturing* aanzet (standaard uit). Zolang die uit staat, schrijft Home EMS niets en blijven je bestaande automatiseringen leidend.
 
@@ -33,7 +33,7 @@ Advies, anti-pendelen en de dagplanner willen allemaal iets van dezelfde thermos
 6. **PV-overschot**: een run starten, of een lopende run vasthouden zolang het huis nog teruglevert.
 7. **Rust**: het comfortminimum, zodat de thermostaat zelf alleen nog als vangnet warmte vraagt.
 
-Het setpoint blijft altijd tussen het comfortminimum en -maximum (standaard 18 en 21,5 °C).
+Het setpoint blijft altijd tussen het comfortminimum en -maximum (standaard 18 en 21,5 °C). Een run die niet op zon draait, blijft bovendien onder een plafond: comfortsetpoint + 1 °C (instelbaar, sinds v0.9). Zo blijft een lange run een rustige run op laag vermogen en loopt de woonkamer niet op naar het comfortmaximum; alleen bij zonne-overschot mag de warmte hoger in het huis.
 
 | Entiteit | Betekenis |
 |---|---|
@@ -130,6 +130,7 @@ De planner rekent uit hoeveel warmte het huis tot het einde van de prijsdata (ma
 - **Kosten per kWh warmte** per kwartier: de stroomprijs (of, bij PV-overschot boven het basisverbruik, de gemiste terugleververgoeding = marktprijs), gedeeld door de COP bij de buitentemperatuur (COP ≈ 3,5 + 0,15 × T, tussen 2,5 en 7).
 - **Gas** (sinds v0.8, optioneel): met een gasprijssensor (all-in per m³, bijvoorbeeld de gasprijs van Jeroen.nl) vergelijkt de planner per kwartier de kosten van warmte uit de warmtepomp (prijs ÷ COP) met die uit de ketel (gasprijs ÷ (9,77 kWh/m³ × 90%)). Waar de ketel goedkoper is (vorst, prijspiek), rekent de planner dat kwartier tegen de gaskosten, zonder stroom: de warmtepomp kiest zelf tussen compressor en ketel, maar alleen als de thermostaat warmte vraagt. Home EMS blijft daar dus gewoon warmte vragen als dat nodig is (sinds v0.8.1; in v0.8.0 werden zulke kwartieren overgeslagen). Attributen `gas_cost_per_kwh_heat` en `gas_cheaper_quarters` op *Volgende geplande run*.
 - **Stand van het huis** (sinds v0.5): staat de woonkamer onder het comfortsetpoint, dan komt er warmte bij (warmtecapaciteit × verschil, standaard 15 kWh/K, maximaal 2 K); staat hij erboven, dan gebruikt de planner eerst die opgeslagen warmte. Alleen in het stookseizoen. Het attribuut `state_kwh` toont dat deel.
+- **Doorlopen in de kou** (sinds v0.9): pauzes tussen geplande runs die korter zijn dan de *kortste pauze* (standaard 2 uur) worden opgevuld, zodat de runs samen één lange run worden. Bij kou ligt de warmtevraag dicht bij wat één warmtepomp op laag vermogen levert; doorlopen is dan veel zuiniger dan stoppen en opnieuw starten (een herstart gaat vaak op hoog vermogen, bij een duo soms met beide warmtepompen tegelijk, met een lagere COP).
 - **Comfort:** runs van minimaal een uur, en nooit langer dan de ingestelde tijd (standaard 8 uur) zonder run. In de zomer, zonder warmtevraag, wordt er niets gepland.
 - **Pieken:** geen vast venster meer (sinds v0.4.5). De prijs per kwartier bevat de ochtend- en avondpiek al, dus de goedkoopste blokken vermijden die vanzelf; een goedkope avond wordt gewoon gebruikt.
 - **Databronnen** (in te stellen via *Configureren*): de stroomprijssensor van [Jeroen.nl](https://github.com/JorisBr-NL/ha-jeroen-nl) (attribuut `prices`, inclusief de prijsvoorspelling; voor de prijspiek in het advies het attribuut `today`, alle kwartieren van vandaag), de opwekvoorspelling van Jeroen.nl (attribuut `hours`) en een weerentiteit met een verwachting per uur. Zonder weerentiteit gebruikt de planner de huidige buitentemperatuur.
@@ -341,7 +342,7 @@ cards:
 
 ### Instellingen (v0.3, v0.4)
 
-Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kies je *Planner en advies*, *Sturing*, *Slaapkamers*, *Aftoppen en witgoed* of *Energie- en kostenoverzicht*. Onder het eerste: de databronnen hierboven, comfortsetpoint, de band voor de vloerregel, minimale vloermarge, PV-overschot voor een run, minimale runtijd, het deel van de dag dat als prijspiek telt (standaard 25%), de langste tijd zonder run, het basisverbruik van het huis, het comfortminimum en -maximum en de warmtecapaciteit van het huis. Wijzigingen gelden direct.
+Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kies je *Planner en advies*, *Sturing*, *Slaapkamers*, *Aftoppen en witgoed* of *Energie- en kostenoverzicht*. Onder het eerste: de databronnen hierboven, comfortsetpoint, de band voor de vloerregel, minimale vloermarge, PV-overschot voor een run, minimale runtijd, het deel van de dag dat als prijspiek telt (standaard 25%), de langste tijd zonder run, het basisverbruik van het huis, het comfortminimum en -maximum, de warmtecapaciteit van het huis, de kortste pauze tussen runs en het plafond van een run boven het comfortsetpoint. Wijzigingen gelden direct.
 
 ### Energie- en kostenoverzicht (v0.4)
 

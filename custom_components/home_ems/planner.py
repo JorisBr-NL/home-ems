@@ -33,6 +33,11 @@ class PlannerSettings:
     base_load_kw: float = 0.4         # house load besides the heat pump
     block: timedelta = timedelta(hours=1)      # minimum length of a planned run
     max_gap: timedelta = timedelta(hours=8)    # longest time without a run
+    # Pauses shorter than this between planned runs are filled, so the runs merge into
+    # one long run. In the cold the heat need is close to what one heat pump gives at
+    # low power, and running on is far more efficient than stopping and starting again
+    # (restarts at high power, both heat pumps together, lower COP).
+    min_pause: timedelta = timedelta(hours=2)
     horizon: timedelta = timedelta(hours=36)
     # State of the house: heat stored above (or missing below) the target temperature
     # changes the heat need by capacity x difference. Capacity from a cooling test
@@ -279,12 +284,23 @@ def plan(slots: list[Slot], now: datetime, s: PlannerSettings | None = None,
 
 def _merge(chosen: list[int], costs: list[SlotCost], per_block: int, reasons: dict[int, str],
            s: PlannerSettings) -> list[PlannedRun]:
+    """Chosen blocks to runs: adjacent quarters join, and pauses shorter than `min_pause`
+    between runs are filled (only between contiguous quarters)."""
     hours = QUARTER.total_seconds() / 3600
+    quarters_on = {q for i in chosen for q in range(i, i + per_block)}
+    block_reason = {q: reasons.get(i) for i in chosen for q in range(i, i + per_block)}
+    pause = round(s.min_pause / QUARTER)
+    ordered = sorted(quarters_on)
+    for a, b in zip(ordered, ordered[1:]):
+        gap = b - a - 1
+        contiguous = all(costs[q + 1].slot.start == costs[q].slot.start + QUARTER for q in range(a, b))
+        if 0 < gap < pause and contiguous:
+            quarters_on.update(range(a + 1, b))
     runs: list[PlannedRun] = []
     group: list[int] = []
-    for i in chosen + [None]:  # type: ignore[list-item]
-        if group and (i is None or costs[i].slot.start != costs[group[-1]].slot.start + per_block * QUARTER):
-            quarters = [c for g in group for c in costs[g:g + per_block]]
+    for q in sorted(quarters_on) + [None]:  # type: ignore[list-item]
+        if group and (q is None or costs[q].slot.start != costs[group[-1]].slot.start + QUARTER):
+            quarters = [costs[g] for g in group]
             el = sum(c.el_kw for c in quarters) * hours
             runs.append(PlannedRun(
                 start=quarters[0].slot.start, end=quarters[-1].slot.start + QUARTER,
@@ -292,9 +308,9 @@ def _merge(chosen: list[int], costs: list[SlotCost], per_block: int, reasons: di
                 cost=sum(c.cost for c in quarters),
                 pv_share=sum(c.pv_share * c.el_kw for c in quarters) / max(el / hours, 1e-9),
                 forecast_price=any(c.slot.forecast for c in quarters),
-                reason="max_gap" if any(reasons.get(g) == "max_gap" for g in group) else "cheapest",
+                reason="max_gap" if any(block_reason.get(g) == "max_gap" for g in group) else "cheapest",
             ))
             group = []
-        if i is not None:
-            group.append(i)
+        if q is not None:
+            group.append(q)
     return runs

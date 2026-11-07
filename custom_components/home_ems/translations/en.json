@@ -181,7 +181,9 @@
           "comfort_min": "Comfort minimum (living room and kitchen)",
           "comfort_max": "Comfort maximum (target setpoint)",
           "capacity_kwh_k": "Heat capacity of the house (planner)",
-          "gas_price_entity": "Gas price sensor (Jeroen.nl, all-in per m³)"
+          "gas_price_entity": "Gas price sensor (Jeroen.nl, all-in per m³)",
+          "min_pause_hours": "Shortest pause between planned runs (shorter pauses are filled)",
+          "run_headroom_k": "Run ceiling above the comfort setpoint (not on solar)"
         }
       },
       "control": {

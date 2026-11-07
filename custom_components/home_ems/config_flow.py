@@ -45,12 +45,14 @@ from .const import (
     OPT_FLOOR_RULE_BAND,
     OPT_GAS_ENTITY,
     OPT_MAX_GAP,
+    OPT_MIN_PAUSE,
     OPT_MIN_RUN,
     OPT_OVERRIDE_HOURS,
     OPT_OVERVIEW_FROM,
     OPT_PRICE_ENTITY,
     OPT_PV_POWER,
     OPT_PV_RUN_THRESHOLD,
+    OPT_RUN_HEADROOM,
     OPT_SOLAR_ENTITY,
     OPT_STAT_EV,
     OPT_STAT_EXPORT,
@@ -254,5 +256,7 @@ class HomeEmsOptionsFlow(OptionsFlow):
             vol.Required(OPT_COMFORT_MIN, default=current[OPT_COMFORT_MIN]): _number(15, 21, 0.1, "°C"),
             vol.Required(OPT_COMFORT_MAX, default=current[OPT_COMFORT_MAX]): _number(19, 24, 0.1, "°C"),
             vol.Required(OPT_CAPACITY, default=current[OPT_CAPACITY]): _number(0, 100, 0.5, "kWh/K"),
+            vol.Required(OPT_MIN_PAUSE, default=current[OPT_MIN_PAUSE]): _number(0, 8, 0.25, "h"),
+            vol.Required(OPT_RUN_HEADROOM, default=current[OPT_RUN_HEADROOM]): _number(0, 3, 0.1, "K"),
         })
         return self.async_show_form(step_id="planner", data_schema=schema)
