@@ -259,8 +259,12 @@ def evaluate(inputs: Inputs, tracker: RunTracker, now: datetime,
         and running is False and pump_on
         else None
     )
+    # Solar surplus for the heat pump: the export, plus what the heat pump itself uses while
+    # it runs. Measured at the grid meter alone, the surplus would vanish as soon as the
+    # heat pump takes it, and a run on solar would undo itself.
+    own = inputs.heat_pump_power_w if running and inputs.heat_pump_power_w else 0.0
     surplus = (
-        max(0.0, -inputs.grid_power_w) if inputs.grid_power_w is not None else None
+        max(0.0, own - inputs.grid_power_w) if inputs.grid_power_w is not None else None
     )
     peak = is_expensive(inputs.price_now, inputs.day_prices, settings.expensive_share)
 

@@ -276,3 +276,13 @@ def test_export_at_negative_market_price_is_counted():
 def test_market_price_now_from_today_rows():
     rows = [{"start": "2026-11-02T10:00:00+00:00", "price": 0.25, "market": -0.004}]
     assert model.prices_today(rows, datetime(2026, 11, 2, 11, 5, tzinfo=CET), "market")[0] == -0.004
+
+
+def test_surplus_counts_what_the_running_heat_pump_uses():
+    # 800 W of solar goes into the heat pump, 200 W still exported: surplus is 1000 W
+    result = evaluate(inputs(power=800.0, grid=-200.0), RunTracker(), at(12))
+    assert result.pv_surplus_w == 1000
+    # importing more than the heat pump uses: no surplus
+    assert evaluate(inputs(power=800.0, grid=900.0), RunTracker(), at(12)).pv_surplus_w == 0
+    # at rest only the export counts (standby power is not added)
+    assert evaluate(inputs(power=5.0, grid=-200.0), RunTracker(), at(12)).pv_surplus_w == 200

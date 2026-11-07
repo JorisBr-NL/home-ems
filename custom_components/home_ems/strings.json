@@ -14,10 +14,25 @@
           "outside_temperature": "Outside temperature",
           "chill_climate": "Quatt Chill"
         }
+      },
+      "reconfigure": {
+        "title": "Home EMS: change entities",
+        "description": "Choose other entities, for example the thermostat entity Home EMS writes to. The options stay as they are.",
+        "data": {
+          "living_climate": "Living room thermostat (master)",
+          "kitchen_climate": "Kitchen thermostat",
+          "heat_pump_power": "Heat pump electrical power (one or more sensors)",
+          "flow_temperature": "Flowmeter temperature (floor water)",
+          "flow_rate": "Flowmeter flow rate",
+          "grid_power": "Grid power (positive = import, negative = export)",
+          "outside_temperature": "Outside temperature",
+          "chill_climate": "Quatt Chill"
+        }
       }
     },
     "abort": {
-      "already_configured": "Home EMS is already configured."
+      "already_configured": "Home EMS is already configured.",
+      "reconfigure_successful": "The entities have been changed."
     }
   },
   "entity": {
@@ -194,7 +209,8 @@
         "description": "Home EMS writes its target setpoint to the living room thermostat while the switch 'Control (write setpoint)' is on (off by default). Turn off the existing heat pump automations and the kitchen setpoint first, so only one party steers the thermostat.",
         "data": {
           "override_hours": "Pause after a setpoint changed by hand",
-          "write_interval_minutes": "Minimum time between two changes"
+          "write_interval_minutes": "Minimum time between two changes",
+          "write_step_k": "Smallest change to write (start and stop are always written)"
         }
       },
       "bedrooms": {

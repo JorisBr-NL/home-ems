@@ -68,6 +68,7 @@ from .const import (
     OPT_STAT_PV,
     OPT_WEATHER_ENTITY,
     OPT_WRITE_INTERVAL,
+    OPT_WRITE_STEP,
     OVERVIEW_OPTIONS,
     PV_APPLIANCE_OPTIONS,
 )
@@ -119,6 +120,19 @@ class HomeEmsConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_create_entry(title=NAME, data=user_input)
         return self.async_show_form(step_id="user", data_schema=SCHEMA)
 
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Change the entities (for example another thermostat entity) without removing
+        the integration: the options stay as they are."""
+        entry = self._get_reconfigure_entry()
+        if user_input is not None:
+            return self.async_update_reload_and_abort(entry, data=user_input)
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=self.add_suggested_values_to_schema(SCHEMA, entry.data),
+        )
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
@@ -168,6 +182,7 @@ class HomeEmsOptionsFlow(OptionsFlow):
         schema = vol.Schema({
             vol.Required(OPT_OVERRIDE_HOURS, default=current[OPT_OVERRIDE_HOURS]): _number(0, 24, 0.5, "h"),
             vol.Required(OPT_WRITE_INTERVAL, default=current[OPT_WRITE_INTERVAL]): _number(1, 60, 1, "min"),
+            vol.Required(OPT_WRITE_STEP, default=current[OPT_WRITE_STEP]): _number(0.1, 1, 0.1, "K"),
         })
         return self.async_show_form(step_id="control", data_schema=schema)
 
