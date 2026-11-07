@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +58,9 @@ from .const import (
     OPT_PRICE_ENTITY,
     OPT_PV_POWER,
     OPT_PV_RUN_THRESHOLD,
+    OPT_NIGHT_CEILING,
+    OPT_NIGHT_END,
+    OPT_NIGHT_START,
     OPT_RUN_HEADROOM,
     OPT_SOLAR_ENTITY,
     OPT_STAT_EV,
@@ -84,7 +87,14 @@ from .const import (
     UPDATE_INTERVAL,
     WEATHER_REFRESH,
 )
-from .arbiter import ArbiterSettings, PvBoost, Target, target_setpoint
+from .arbiter import (
+    ArbiterSettings,
+    PvBoost,
+    Target,
+    in_window,
+    night_ceiling,
+    target_setpoint,
+)
 from .appliances import StartAdvice, best_start, parse_appliances
 from .bedrooms import Bedroom, BedroomSettings, RoomTarget, parse_rooms, room_targets
 from .curtail import CurtailAdvice, CurtailState, advise as curtail_advise
@@ -308,12 +318,28 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
 
     # ------------------------------------------------------------ arbiter (shadow mode)
 
-    def arbiter_settings(self) -> ArbiterSettings:
+    def night_now(self, now: datetime | None = None) -> bool:
+        """The night ceiling is set and it is night now (local time)."""
+        if float(self.option(OPT_NIGHT_CEILING) or 0) <= 0:
+            return False
+        try:
+            start = time.fromisoformat(str(self.option(OPT_NIGHT_START)))
+            end = time.fromisoformat(str(self.option(OPT_NIGHT_END)))
+        except ValueError:
+            return False
+        moment = dt_util.as_local(now or dt_util.now()).time()
+        return in_window(moment, start, end)
+
+    def arbiter_settings(self, now: datetime | None = None) -> ArbiterSettings:
         comfort_min = float(self.option(OPT_COMFORT_MIN))
+        ceiling = float(self.option(OPT_COMFORT_SETPOINT)) + float(self.option(OPT_RUN_HEADROOM))
+        night = self.night_now(now)
+        if night:
+            ceiling = night_ceiling(ceiling, float(self.option(OPT_NIGHT_CEILING)), comfort_min)
         return ArbiterSettings(comfort_min=comfort_min,
                                comfort_max=float(self.option(OPT_COMFORT_MAX)),
-                               run_ceiling=float(self.option(OPT_COMFORT_SETPOINT))
-                               + float(self.option(OPT_RUN_HEADROOM)),
+                               run_ceiling=ceiling,
+                               night=night,
                                gap_max=float(self.option(OPT_GAP_MAX)),
                                boost_margin_w=float(self.option(OPT_BOOST_MARGIN)),
                                low_price=float(self.option(OPT_LOW_PRICE)),
@@ -326,7 +352,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             # keep going instead of stopping and starting again (after a restart or a
             # change of the plan, the run in progress may not be in the new plan)
             plan_now = self.plan.run_soon(now, timedelta(hours=float(self.option(OPT_MIN_PAUSE))))
-        args = (evaluation, living_temp, plan_now, self.enabled, self.arbiter_settings(),
+        args = (evaluation, living_temp, plan_now, self.enabled, self.arbiter_settings(now),
                 self.current_setpoint())
         target = target_setpoint(*args, price_now=self._price_now, pv_extra=self.pv_boost.extra)
         rooms = self.bedrooms() if self.enabled else []

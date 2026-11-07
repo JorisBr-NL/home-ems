@@ -183,3 +183,30 @@ def test_pv_boost_follows_the_five_minute_average_of_the_grid_meter():
     assert feed([0], running=False) == 0.0  # at rest without export: 0 at once
     off = arbiter.ArbiterSettings(boost_margin_w=0)
     assert arbiter.PvBoost(extra=0.3).update(-2000, True, t0, five, off) == 0.0
+
+
+def test_night_window_wraps_past_midnight():
+    from datetime import time
+    w = arbiter.in_window
+    assert w(time(23, 30), time(23, 0), time(6, 0))
+    assert w(time(2, 0), time(23, 0), time(6, 0))
+    assert not w(time(6, 0), time(23, 0), time(6, 0))
+    assert not w(time(22, 59), time(23, 0), time(6, 0))
+    assert w(time(13, 0), time(12, 0), time(14, 0))
+    assert not w(time(1, 0), time(1, 0), time(1, 0))
+
+
+def test_night_ceiling_lets_the_house_cool():
+    assert arbiter.night_ceiling(20.0, 18.5, 18.0) == 18.5
+    assert arbiter.night_ceiling(20.0, 17.0, 18.0) == 18.0   # never below the comfort minimum
+    assert arbiter.night_ceiling(19.2, 19.5, 18.0) == 19.2   # never above the day ceiling
+    s = arbiter.ArbiterSettings(run_ceiling=18.5, night=True)
+    run = ev(Advice.RUNNING, running=True)
+    # a planned run with the room above the night ceiling: the setpoint drops below the room
+    t = arbiter.target_setpoint(run, 19.4, True, settings=s, current_setpoint=19.5)
+    assert t.setpoint == 18.5
+    # at night a low price does not lift the ceiling to the comfort maximum
+    cheap = arbiter.ArbiterSettings(run_ceiling=18.5, night=True, low_price=0.20)
+    assert arbiter.target_setpoint(run, 18.3, True, settings=cheap, price_now=0.10).setpoint == 18.5
+    day = arbiter.ArbiterSettings(run_ceiling=18.5, low_price=0.20)
+    assert arbiter.target_setpoint(run, 18.3, True, settings=day, price_now=0.10).setpoint > 18.5

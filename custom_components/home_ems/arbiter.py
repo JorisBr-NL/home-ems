@@ -20,7 +20,7 @@ so the room may also cool down slowly while one heat pump runs at its lowest pow
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # no runtime import, so the tests can load this file on its own
@@ -44,6 +44,9 @@ class ArbiterSettings:
     # setpoint follows the room up during a run; without a ceiling a long run would
     # push the room up to the comfort maximum. Runs on solar may go higher (storage).
     run_ceiling: float = 20.0
+    # At night (see in_window) the ceiling holds for every run, also with a low price
+    # boost: the house may cool down, nobody needs 20 °C in the middle of the night.
+    night: bool = False
     # Variable gap, at most gap_max: on solar it follows the grid meter (PvBoost: steps of
     # boost_step while the 5-minute average export or import is above boost_margin_w, 0 = off); at a price
     # at or below low_price (all-in EUR/kWh, 0 = off) it is gap_max at once. With a boost
@@ -121,6 +124,21 @@ def boost(pv_extra: float, price_now: float | None,
     return None, 0.0
 
 
+def in_window(moment: time, start: time, end: time) -> bool:
+    """`moment` lies in [start, end); a window past midnight (23:00-06:00) wraps."""
+    if start == end:
+        return False
+    if start < end:
+        return start <= moment < end
+    return moment >= start or moment < end
+
+
+def night_ceiling(day_ceiling: float, night: float, comfort_min: float) -> float:
+    """Run ceiling at night: the night value, never below the comfort minimum and never
+    above the day ceiling."""
+    return min(day_ceiling, max(night, comfort_min))
+
+
 def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_now: bool,
                     enabled: bool = True, settings: ArbiterSettings | None = None,
                     current_setpoint: float | None = None, bedroom_call: bool = False,
@@ -151,7 +169,7 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
         return max(base, min(s.gap_max, base + extra))
 
     # with a boost the heat may go up to the comfort maximum (stored in the house)
-    top = s.comfort_max if why else s.run_ceiling
+    top = s.comfort_max if why and not s.night else s.run_ceiling
     start = keep(clamp(living_temp + gap(s.start_offset), top), top)
     hold = keep(clamp(living_temp + gap(s.hold_offset), top), top)
     # on solar surplus up to the comfort maximum: heat stored in the house
