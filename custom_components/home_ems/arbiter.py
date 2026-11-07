@@ -10,15 +10,17 @@ fixed order of priority:
 Runs stay below a ceiling (comfort setpoint + headroom), except on solar surplus.
 
 Runs are started and held with a setpoint just above the room, because tado modulates
-on that gap (small gap = low compressor speed = higher COP). With solar surplus or a low
-price the gap grows, so the heat pump runs harder and stores the cheap energy as heat in
-the house; otherwise it stays small and the heat pump runs gently. During a run the
-setpoint follows the room up and down (room + hold offset), so the room may also cool down
-slowly while one heat pump runs at its lowest power.
+on that gap (small gap = low compressor speed = higher COP). Under a low price the gap is
+the largest gap. On solar the gap follows the grid meter (`PvBoost`): one step up while
+power still flows out, one step down while power comes in, so the heat pump settles where
+it uses the solar power and no grid power. Otherwise the gap stays small and the heat pump
+runs gently. During a run the setpoint follows the room up and down (room + hold offset),
+so the room may also cool down slowly while one heat pump runs at its lowest power.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # no runtime import, so the tests can load this file on its own
@@ -42,11 +44,13 @@ class ArbiterSettings:
     # setpoint follows the room up during a run; without a ceiling a long run would
     # push the room up to the comfort maximum. Runs on solar may go higher (storage).
     run_ceiling: float = 20.0
-    # Variable gap: from the offsets above up to gap_max, in proportion to the solar
-    # surplus (full at full_surplus_w) or fully at a price at or below low_price (all-in
-    # EUR/kWh, 0 = off). With a boost the ceiling is the comfort maximum (heat stored).
+    # Variable gap, at most gap_max: on solar it follows the grid meter (PvBoost: steps of
+    # boost_step while the export or import is above boost_margin_w, 0 = off); at a price
+    # at or below low_price (all-in EUR/kWh, 0 = off) it is gap_max at once. With a boost
+    # the ceiling is the comfort maximum (heat stored in the house).
     gap_max: float = 0.6
-    full_surplus_w: float = 1500.0
+    boost_margin_w: float = 100.0
+    boost_step: float = 0.1
     low_price: float = 0.20
 
 
@@ -56,30 +60,64 @@ class Target:
     source: str              # off, unknown, comfort_min, floor, keep_running, bedroom, planner, pv, idle
     reason: str
     boost: str | None = None  # "solar surplus" or "low price" when the gap was raised
-    boost_factor: float = 0.0
+    boost_k: float = 0.0      # how far the gap was raised above the normal gap
 
     def differs_from(self, current: float | None) -> bool:
         """True when writing the target would change the thermostat (0.1 C steps)."""
         return self.setpoint is not None and (current is None or abs(self.setpoint - current) >= 0.05)
 
 
-def boost(surplus_w: float | None, price_now: float | None,
-          s: ArbiterSettings) -> tuple[float, str | None]:
-    """How far to raise the gap (0..1) and why: solar surplus scales, a low price is full."""
-    pv = (min(1.0, max(0.0, (surplus_w or 0.0) / s.full_surplus_w))
-          if s.full_surplus_w > 0 else 0.0)
-    cheap = 1.0 if s.low_price > 0 and price_now is not None and price_now <= s.low_price else 0.0
-    if cheap > 0 and cheap >= pv:
-        return cheap, "low price"
-    if pv > 0:
-        return pv, "solar surplus"
-    return 0.0, None
+@dataclass
+class PvBoost:
+    """Extra gap on solar, steered by the grid meter (K above the normal gap).
+
+    While power flows out (export above the margin) the extra gap goes up one step, while
+    power comes in (import above the margin) it goes down one step, at most one step per
+    `interval` so the heat pump has time to respond. Within the margin it stays. At rest
+    without export it is 0 at once. The surplus is not used here: it includes what the
+    heat pump already takes, and running harder on that only pulls power from the grid.
+    """
+
+    extra: float = 0.0
+    changed: datetime | None = None
+
+    def update(self, grid_w: float | None, running: bool | None, now: datetime,
+               interval: timedelta, s: ArbiterSettings) -> float:
+        top = max(0.0, s.gap_max - s.hold_offset)
+        if s.boost_margin_w <= 0 or grid_w is None or top == 0:
+            self.extra, self.changed = 0.0, None
+            return self.extra
+        exporting = grid_w < -s.boost_margin_w
+        if not running and not exporting:
+            self.extra, self.changed = 0.0, None
+            return self.extra
+        if self.changed is not None and now - self.changed < interval:
+            return self.extra
+        new = self.extra
+        if exporting:
+            new = min(top, self.extra + s.boost_step)
+        elif grid_w > s.boost_margin_w:
+            new = max(0.0, self.extra - s.boost_step)
+        new = round(new, 2)
+        if new != self.extra:
+            self.extra, self.changed = new, now
+        return self.extra
+
+
+def boost(pv_extra: float, price_now: float | None,
+          s: ArbiterSettings) -> tuple[str | None, float]:
+    """Why the gap is raised and the extra gap on solar: a low price wins (largest gap)."""
+    if s.low_price > 0 and price_now is not None and price_now <= s.low_price:
+        return "low price", 0.0
+    if pv_extra > 0:
+        return "solar surplus", pv_extra
+    return None, 0.0
 
 
 def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_now: bool,
                     enabled: bool = True, settings: ArbiterSettings | None = None,
                     current_setpoint: float | None = None, bedroom_call: bool = False,
-                    price_now: float | None = None) -> Target:
+                    price_now: float | None = None, pv_extra: float = 0.0) -> Target:
     s = settings or ArbiterSettings()
     if not enabled:
         return Target(None, "off", "EMS switched off: the thermostat schedule leads")
@@ -98,13 +136,15 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
             return current_setpoint
         return value
 
-    factor, why = boost(evaluation.pv_surplus_w, price_now, s)
+    why, extra = boost(pv_extra, price_now, s)
 
     def gap(base: float) -> float:
-        return base + factor * max(0.0, s.gap_max - base)
+        if why == "low price":
+            return max(base, s.gap_max)
+        return max(base, min(s.gap_max, base + extra))
 
     # with a boost the heat may go up to the comfort maximum (stored in the house)
-    top = s.comfort_max if factor > 0 else s.run_ceiling
+    top = s.comfort_max if why else s.run_ceiling
     start = keep(clamp(living_temp + gap(s.start_offset), top), top)
     hold = keep(clamp(living_temp + gap(s.hold_offset), top), top)
     # on solar surplus up to the comfort maximum: heat stored in the house
@@ -115,7 +155,8 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
     def result(setpoint: float, source: str, reason: str) -> Target:
         if source == "idle":
             return Target(setpoint, source, reason)
-        return Target(setpoint, source, reason, why, round(factor, 2))
+        raised = round(gap(s.hold_offset) - s.hold_offset, 2) if why else 0.0
+        return Target(setpoint, source, reason, why, raised)
 
     if evaluation.advice == "run" and evaluation.cause == "comfort_min":
         return result(start, "comfort_min", evaluation.reason)

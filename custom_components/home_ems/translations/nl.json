@@ -199,9 +199,9 @@
           "gas_price_entity": "Gasprijssensor (Jeroen.nl, all-in per m³)",
           "min_pause_hours": "Kortste pauze tussen geplande runs (kortere pauzes worden opgevuld)",
           "run_headroom_k": "Plafond van een run boven het comfortsetpoint (niet op zon)",
-          "gap_max_k": "Grootste gat setpoint − kamer (zonne-overschot of lage prijs)",
-          "full_surplus_w": "Zonne-overschot voor het grootste gat",
-          "low_price_eur": "Lage prijs (all-in) voor het grootste gat, 0 = uit"
+          "gap_max_k": "Grootste gat setpoint − kamer (zon of lage prijs)",
+          "low_price_eur": "Lage prijs (all-in) voor het grootste gat, 0 = uit",
+          "boost_margin_w": "Zonneboost: gat een stap omhoog of omlaag boven deze teruglevering of afname, 0 = uit"
         }
       },
       "control": {

@@ -256,3 +256,15 @@ def test_a_run_in_progress_stays_when_the_plan_is_made_again():
         assert p.running_now(now), now
         current = next(r for r in p.runs if r.start <= now < r.end)
         keep, now = current.end, now + timedelta(minutes=5)
+
+
+def test_run_soon_looks_ahead_within_the_pause():
+    prices = {h: 0.30 for h in range(24)} | {h: 0.20 for h in (2, 3)}
+    s = planner.PlannerSettings(horizon=timedelta(hours=24), max_gap=timedelta(hours=24),
+                                heat_base_kwh_day=0.0, heat_per_dh=0.0)
+    s = planner.PlannerSettings(**{**s.__dict__, "heat_base_kwh_day": 2 * s.heat_rate_kw})
+    p = planner.plan(day(prices, temp=20.0), T0, s)
+    two = timedelta(hours=2)
+    assert p.run_soon(T0 + timedelta(minutes=30), two)       # run at 02:00, 1.5 h away
+    assert not p.run_soon(T0 - timedelta(hours=1), two)      # 3 h away
+    assert not p.run_soon(T0 + timedelta(hours=2, minutes=30), two)   # in progress: not "soon"
