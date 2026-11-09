@@ -14,7 +14,7 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.home_ems.const import DOMAIN
 
-from .conftest import DATA, LIVING, set_house
+from .conftest import DATA, LIVING, NO_NIGHT, set_house
 
 TARGET = "sensor.home_ems_target_setpoint_living_room"
 CONTROL = "switch.home_ems_control_write_setpoint"
@@ -113,7 +113,7 @@ async def test_control_switch_is_restored_without_writing(recorder_mock, hass, e
 async def test_options_menu_has_control_and_keeps_other_screens(recorder_mock, hass, entry):
     set_house(hass)
     await _setup(hass, entry)
-    hass.config_entries.async_update_entry(entry, options={"comfort_setpoint": 19.5})
+    hass.config_entries.async_update_entry(entry, options={**NO_NIGHT, "comfort_setpoint": 19.5})
     await hass.async_block_till_done()
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
@@ -133,7 +133,7 @@ async def test_bedroom_below_target_before_bedtime_asks_for_a_run(hass, freezer)
     bedtime = (dt_util.now() + timedelta(minutes=30)).strftime("%H:%M")
     set_house(hass, room=19.4, flow=21.0)         # floor fine, room above its minimum: no run
     hass.states.async_set("climate.room_a", "heat", {"current_temperature": 15.0, "temperature": 13.0})
-    entry = MockConfigEntry(domain=DOMAIN, title="Home EMS", data=DATA, unique_id=DOMAIN, options={
+    entry = MockConfigEntry(domain=DOMAIN, title="Home EMS", data=DATA, unique_id=DOMAIN, options={**NO_NIGHT,
         "bedrooms": f'- entiteit: climate.room_a\n  naam: Room A\n  doel: 17\n  bedtijd: "{bedtime}"\n'})
     await _setup(hass, entry)
 
@@ -152,7 +152,7 @@ async def test_negative_price_shows_which_inverter_would_go_off(hass, freezer):
     hass.states.async_set("sensor.price", "0.10", {
         "today": [{"start": "2027-05-01T11:00:00+00:00", "price": 0.10, "market": -0.02}],
         "prices": []})
-    entry = MockConfigEntry(domain=DOMAIN, title="Home EMS", data=DATA, unique_id=DOMAIN, options={
+    entry = MockConfigEntry(domain=DOMAIN, title="Home EMS", data=DATA, unique_id=DOMAIN, options={**NO_NIGHT,
         "price_entity": "sensor.price",
         "pv_power_entities": ["sensor.inverter_a", "sensor.inverter_b"]})
     await _setup(hass, entry)
@@ -180,7 +180,7 @@ async def test_a_write_that_did_not_arrive_is_retried(recorder_mock, hass, entry
 async def test_reconfigure_changes_the_thermostat_and_keeps_the_options(recorder_mock, hass, entry):
     set_house(hass)
     await _setup(hass, entry)
-    hass.config_entries.async_update_entry(entry, options={"comfort_setpoint": 19.5})
+    hass.config_entries.async_update_entry(entry, options={**NO_NIGHT, "comfort_setpoint": 19.5})
     await hass.async_block_till_done()
 
     result = await entry.start_reconfigure_flow(hass)

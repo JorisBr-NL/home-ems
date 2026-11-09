@@ -46,6 +46,72 @@ if TYPE_CHECKING:  # no runtime import, so the tests can load this file on its o
 
 
 OFF_FLOOR = 15.0   # the off level never goes below this (frost and comfort safety)
+BOOST_MISSING = timedelta(minutes=10)   # boost reset after this long without a grid reading
+BEDROOM_EXTRA = 0.3   # a bedroom run may lift the living room this far above the top
+RUN_SOURCES_ARBITER = ("comfort_min", "floor", "minimum", "keep_running", "bedroom", "planner",
+                       "pv", "to_top")
+
+
+@dataclass
+class RunLatch:
+    """The run as the EMS sees it (v0.10.8).
+
+    The heat pump power alone is not a good "running" signal: the compressor pauses in the
+    middle of a run, the duo switches units, and a start takes a few minutes. Without a
+    latch the arbiter saw "not running" during such a gap and wrote the off level, so the
+    run ended early and started again a bit later. A run of the EMS is active from the
+    start until the EMS itself stops it; while it is active, a gap in the power shorter
+    than `grace` (and the wait for the start) still counts as running. `ceiling` is the
+    top at the start, so a run that starts by day keeps the day top into the night window.
+    """
+
+    since: datetime | None = None
+    source: str | None = None
+    ceiling: float | None = None
+    last_on: datetime | None = None
+
+    def running(self, power_on: bool | None, now: datetime, grace: timedelta) -> bool | None:
+        """Running as far as the arbiter is concerned: only a run of the EMS itself. After
+        the EMS stopped a run, the heat pump runs on for a few minutes; that must not count,
+        or the hold rules (solar, minimum run time) would take the run up again at once."""
+        if power_on:
+            self.last_on = now
+        if power_on is None:
+            return None
+        if self.since is None:
+            return False
+        if power_on:
+            return True
+        ref = max(t for t in (self.since, self.last_on) if t is not None)
+        return now - ref <= grace
+
+    def update(self, source: str, now: datetime, ceiling: float | None) -> None:
+        if source in RUN_SOURCES_ARBITER:
+            if self.since is None:
+                self.since, self.source, self.ceiling = now, source, ceiling
+        else:
+            self.since = self.source = self.ceiling = None
+
+    def to_dict(self) -> dict:
+        def iso(value: datetime | None) -> str | None:
+            return value.isoformat() if value else None
+        return {"since": iso(self.since), "source": self.source, "ceiling": self.ceiling,
+                "last_on": iso(self.last_on)}
+
+    @classmethod
+    def from_dict(cls, data: dict | None) -> RunLatch:
+        def parse(value: str | None) -> datetime | None:
+            return datetime.fromisoformat(value) if value else None
+        data = data or {}
+        return cls(parse(data.get("since")), data.get("source"), data.get("ceiling"),
+                   parse(data.get("last_on")))
+
+
+def until_window_end(moment: time, end: time) -> timedelta:
+    """Time from `moment` to the next `end` (same day or the next)."""
+    a = timedelta(hours=moment.hour, minutes=moment.minute, seconds=moment.second)
+    b = timedelta(hours=end.hour, minutes=end.minute, seconds=end.second)
+    return (b - a) % timedelta(days=1)
 
 
 @dataclass(frozen=True)
@@ -111,19 +177,26 @@ class PvBoost:
     extra: float = 0.0
     decided: datetime | None = None
     samples: list[float] = field(default_factory=list)
+    missing_since: datetime | None = None
 
     def reset(self) -> float:
-        self.extra, self.decided, self.samples = 0.0, None, []
+        self.extra, self.decided, self.samples, self.missing_since = 0.0, None, [], None
         return self.extra
 
     def update(self, grid_w: float | None, running: bool | None, now: datetime,
                interval: timedelta, s: ArbiterSettings) -> float:
         top = max(0.0, s.gap_max - s.hold_offset)
-        if s.boost_margin_w <= 0 or top == 0:
+        if s.boost_margin_w <= 0 or top == 0 or s.night:
             return self.reset()
         if grid_w is None:
-            # a grid reading that drops out for a minute keeps the step reached so far
+            # a grid reading that drops out for a few minutes keeps the step reached so far,
+            # but not for long: without readings the boost would stay up all evening
+            if self.missing_since is None:
+                self.missing_since = now
+            if now - self.missing_since > BOOST_MISSING:
+                return self.reset()
             return self.extra
+        self.missing_since = None
         if not running and grid_w >= -s.boost_margin_w:
             return self.reset()
         self.samples.append(grid_w)
@@ -172,10 +245,11 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
                     enabled: bool = True, settings: ArbiterSettings | None = None,
                     current_setpoint: float | None = None, bedroom_call: bool = False,
                     price_now: float | None = None, pv_extra: float = 0.0,
-                    prev_raised: float = 0.0) -> Target:
+                    prev_raised: float = 0.0, pv_hold: bool | None = None) -> Target:
     """`prev_raised`: how far the gap was raised in the previous target (its boost_k). The
     setpoint follows the room up only, but a raise that is taken back (less sun) comes off
-    the setpoint again."""
+    the setpoint again. `pv_hold`: a run may go on on solar (steady 5-minute surplus with
+    real sun, worked out by the coordinator); None = any surplus (as before v0.10.8)."""
     s = settings or ArbiterSettings()
     if not enabled:
         return Target(None, "off", "EMS switched off: the thermostat schedule leads")
@@ -207,10 +281,14 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
         return round(min(value, ceiling, s.comfort_max), 1)
 
     start, hold = on(s.start_offset, top), on(s.hold_offset, top)
-    # starts that protect the house (comfort minimum, floor, bedrooms) always ask for heat,
-    # also when the room is at the top: a setpoint equal to the room would leave the
-    # switch point to tado
-    start_safe, hold_safe = on(s.start_offset, s.comfort_max), on(s.hold_offset, s.comfort_max)
+    # starts that protect the house (comfort minimum, floor, bedrooms, minimum run time)
+    # always ask for heat, also when the room is at the top (a setpoint equal to the room
+    # would leave the switch point to tado), but they do not lift it to the comfort
+    # maximum: just above the room or up to the top
+    start_safe = on(s.start_offset, max(top, living_temp + s.start_offset))
+    hold_safe = on(s.hold_offset, max(top, living_temp + s.hold_offset))
+    bedroom_top = min(s.comfort_max, top + BEDROOM_EXTRA)
+    pv_ok = (bool(evaluation.pv_surplus_w) if pv_hold is None else pv_hold) and not s.night
     start_pv, hold_pv = on(s.start_offset, s.comfort_max), on(s.hold_offset, s.comfort_max)
     at_top = living_temp >= top
     room_to_climb = living_temp <= top - s.start_band + 1e-9
@@ -225,25 +303,32 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
         return result(start_safe, "comfort_min", evaluation.reason)
     if evaluation.advice == "run" and evaluation.cause == "floor":
         return result(start_safe, "floor", evaluation.reason)
-    if evaluation.advice == "keep_running":
+    if running and living_temp >= s.comfort_max:
+        # at the comfort maximum the run always stops, also within the minimum run time
+        return result(off, "idle", f"room reached the comfort maximum ({s.comfort_max:.1f}): stop the run")
+    if running and evaluation.advice == "keep_running":
         # also past the top: stopping before the minimum run time is worse
         return result(hold_safe, "keep_running",
                       "hold the run until the minimum run time")
+    if running and evaluation.cause == "comfort_min":
+        # hysteresis: a run for the comfort minimum goes on until the room (or the kitchen)
+        # is a little above it, so a cold kitchen does not give a run every half hour
+        return result(hold_safe, "comfort_min", evaluation.reason)
     if bedroom_call:
         # warm water only reaches the bedrooms while the living room asks for heat
-        if running:
-            return result(hold_safe, "bedroom", "bedroom below target before bedtime: keep the run going")
-        return result(start_safe, "bedroom", "bedroom below target before bedtime: short run")
+        if running and living_temp < bedroom_top:
+            return result(on(s.hold_offset, bedroom_top), "bedroom",
+                          "bedroom below target before bedtime: keep the run going")
+        if not running:
+            return result(on(s.start_offset, max(bedroom_top, living_temp + s.start_offset)),
+                          "bedroom", "bedroom below target before bedtime: short run")
     if not running and living_temp <= s.living_min + s.min_lead + 1e-9:
         return result(start, "minimum", "living room at its minimum: the EMS starts a run")
-    if running and living_temp >= s.comfort_max and evaluation.advice != "keep_running":
-        # the room reached the comfort maximum (solar or low price): stop cleanly
-        return result(off, "idle", f"room reached the comfort maximum ({s.comfort_max:.1f}): stop the run")
-    if (evaluation.advice == "run" and evaluation.cause == "pv"
+    if (evaluation.advice == "run" and evaluation.cause == "pv" and not s.night
             and living_temp <= s.comfort_max - s.start_band + 1e-9):
         # a run on solar also needs room to climb: not just below the comfort maximum
         return result(start_pv, "pv", evaluation.reason)
-    if running and evaluation.pv_surplus_w:
+    if running and pv_ok:
         # still exporting while the heat pump runs: a long run on solar is the cheapest heat
         return result(hold_pv, "pv", "run on solar surplus: keep it going")
     if running and at_top:
