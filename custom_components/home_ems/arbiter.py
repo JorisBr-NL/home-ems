@@ -71,13 +71,17 @@ class RunLatch:
     last_on: datetime | None = None
 
     def running(self, power_on: bool | None, now: datetime, grace: timedelta) -> bool | None:
+        """Running as far as the arbiter is concerned: only a run of the EMS itself. After
+        the EMS stopped a run, the heat pump runs on for a few minutes; that must not count,
+        or the hold rules (solar, minimum run time) would take the run up again at once."""
         if power_on:
             self.last_on = now
-            return True
         if power_on is None:
             return None
         if self.since is None:
             return False
+        if power_on:
+            return True
         ref = max(t for t in (self.since, self.last_on) if t is not None)
         return now - ref <= grace
 
@@ -302,7 +306,7 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
     if running and living_temp >= s.comfort_max:
         # at the comfort maximum the run always stops, also within the minimum run time
         return result(off, "idle", f"room reached the comfort maximum ({s.comfort_max:.1f}): stop the run")
-    if evaluation.advice == "keep_running":
+    if running and evaluation.advice == "keep_running":
         # also past the top: stopping before the minimum run time is worse
         return result(hold_safe, "keep_running",
                       "hold the run until the minimum run time")

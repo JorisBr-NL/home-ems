@@ -394,3 +394,19 @@ def test_pv_boost_resets_after_ten_minutes_without_grid_and_at_night():
     b = arbiter.PvBoost(extra=0.3)
     night = arbiter.ArbiterSettings(gap_max=0.6, boost_margin_w=300, night=True)
     assert b.update(-1000.0, True, t0, step, night) == 0.0
+
+
+def test_after_a_stop_the_after_run_is_not_taken_up_again():
+    from datetime import datetime, timedelta, timezone
+    t0 = datetime(2026, 11, 9, 13, 0, tzinfo=timezone.utc)
+    grace = timedelta(minutes=10)
+    latch = arbiter.RunLatch()
+    latch.update("pv", t0, 20.0)
+    assert latch.running(True, t0, grace) is True
+    latch.update("idle", t0 + timedelta(minutes=1), 20.0)    # the EMS stopped at the comfort maximum
+    # the heat pump still runs on: for the arbiter there is no run
+    assert latch.running(True, t0 + timedelta(minutes=2), grace) is False
+    s = arbiter.ArbiterSettings(living_min=19.0, run_ceiling=19.5, comfort_max=20.0)
+    after = ev(Advice.KEEP_RUNNING, running=False, surplus=900.0)
+    t = arbiter.target_setpoint(after, 19.9, False, settings=s, current_setpoint=18.5, pv_hold=True)
+    assert (t.setpoint, t.source) == (18.5, "idle")
