@@ -10,7 +10,6 @@ Observation mode: the plan is only shown, nothing is switched.
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone, tzinfo
 from zoneinfo import ZoneInfo
@@ -25,7 +24,12 @@ class PlannerSettings:
     heat_base_kwh_day: float = -5.3   # heat per day = base + per_dh * degree-hours
     heat_per_dh: float = 0.217        # kWh heat per degree-hour (18 C base)
     base_temp: float = 18.0
-    heat_rate_kw: float = 2.9         # heat delivered per run-hour
+    # Heat delivered per run-hour at 0 C outside, and how much less per degree warmer
+    # (the heat pump follows its own heating curve: at 9 C a Quatt Duo gave ~3.4 kW,
+    # at 2.5 C ~6 kW). Slope 0 = the same rate at every temperature.
+    heat_rate_kw: float = 2.9
+    heat_rate_slope: float = 0.0
+    heat_rate_min: float = 1.0
     cop_intercept: float = 3.5        # COP = intercept + slope * outdoor temp, clipped
     cop_slope: float = 0.15
     cop_min: float = 2.5
@@ -76,6 +80,7 @@ class SlotCost:
     pv_share: float              # part of the heat pump power covered by solar surplus
     cost: float                  # EUR for running this quarter
     cost_per_kwh_heat: float
+    heat_kw: float = 2.9         # heat delivered while running this quarter
 
 
 @dataclass(frozen=True)
@@ -169,16 +174,24 @@ def cop_at(temp: float | None, s: PlannerSettings) -> float:
     return min(s.cop_max, max(s.cop_min, s.cop_intercept + s.cop_slope * temp))
 
 
+def heat_rate_at(temp: float | None, s: PlannerSettings) -> float:
+    """Heat (kW) the heat pump delivers while it runs at this outdoor temperature."""
+    if temp is None:
+        temp = 8.0
+    return max(s.heat_rate_min, s.heat_rate_kw - s.heat_rate_slope * temp)
+
+
 def slot_cost(slot: Slot, s: PlannerSettings) -> SlotCost:
     cop = cop_at(slot.temp, s)
-    el_kw = s.heat_rate_kw / cop
+    rate = heat_rate_at(slot.temp, s)
+    el_kw = rate / cop
     surplus = max(0.0, slot.pv_kw - s.base_load_kw)
     pv_kw = min(el_kw, surplus)
     export_value = slot.market if slot.market is not None else 0.0
     hours = QUARTER.total_seconds() / 3600
     cost = (pv_kw * export_value + (el_kw - pv_kw) * slot.price) * hours
     return SlotCost(slot, cop, el_kw, pv_kw / el_kw if el_kw else 0.0, cost,
-                    cost / (s.heat_rate_kw * hours))
+                    cost / (rate * hours), rate)
 
 
 def gas_heat_cost(s: PlannerSettings) -> float | None:
@@ -230,16 +243,15 @@ def plan(slots: list[Slot], now: datetime, s: PlannerSettings | None = None,
         for k, c in enumerate(costs):
             if c.cost_per_kwh_heat > gas:
                 gas_quarters += 1
-                costs[k] = SlotCost(c.slot, c.cop, 0.0, 0.0, gas * s.heat_rate_kw * hours, gas)
+                costs[k] = SlotCost(c.slot, c.cop, 0.0, 0.0, gas * c.heat_kw * hours, gas, c.heat_kw)
     season_need = heat_need(slots, s)
     state = state_heat(living_temp, s) if season_need > 0 else 0.0   # only in the heating season
     need = max(0.0, season_need + state)
     kept = 0
     if keep_until is not None:
         kept = sum(1 for c in costs if c.slot.start < keep_until)
-        need = max(0.0, need - s.heat_rate_kw * kept * QUARTER.total_seconds() / 3600)
+        need = max(0.0, need - sum(c.heat_kw for c in costs[:kept]) * QUARTER.total_seconds() / 3600)
     per_block = round(s.block / QUARTER)
-    blocks_needed = math.ceil(need / (s.heat_rate_kw * s.block.total_seconds() / 3600) - 1e-9)
 
     def contiguous(i: int) -> bool:
         return all(costs[i + k].slot.start == costs[i].slot.start + k * QUARTER
@@ -256,12 +268,17 @@ def plan(slots: list[Slot], now: datetime, s: PlannerSettings | None = None,
     def free(i: int) -> bool:
         return all(abs(i - j) >= per_block for j in chosen)
 
+    def block_heat(i: int) -> float:
+        return sum(c.heat_kw for c in costs[i:i + per_block]) * QUARTER.total_seconds() / 3600
+
+    planned = 0.0
     for i in sorted(starts, key=lambda i: (block_cost(i), i)):
-        if len(chosen) >= blocks_needed:
+        if planned >= need - 1e-9:
             break
         if free(i):
             chosen.append(i)
             reasons[i] = "cheapest"
+            planned += block_heat(i)
 
     # comfort: no gap longer than max_gap, counted from the last run (or now); only
     # when there is heat demand at all, so not in summer
@@ -319,7 +336,7 @@ def _merge(chosen: list[int], costs: list[SlotCost], per_block: int, reasons: di
             el = sum(c.el_kw for c in quarters) * hours
             runs.append(PlannedRun(
                 start=quarters[0].slot.start, end=quarters[-1].slot.start + QUARTER,
-                heat_kwh=s.heat_rate_kw * hours * len(quarters), el_kwh=el,
+                heat_kwh=sum(c.heat_kw for c in quarters) * hours, el_kwh=el,
                 cost=sum(c.cost for c in quarters),
                 pv_share=sum(c.pv_share * c.el_kw for c in quarters) / max(el / hours, 1e-9),
                 forecast_price=any(c.slot.forecast for c in quarters),
