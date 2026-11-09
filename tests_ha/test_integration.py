@@ -131,7 +131,7 @@ async def test_options_menu_has_control_and_keeps_other_screens(recorder_mock, h
 async def test_bedroom_below_target_before_bedtime_asks_for_a_run(hass, freezer):
     freezer.move_to("2026-11-10T20:00:00+00:00")
     bedtime = (dt_util.now() + timedelta(minutes=30)).strftime("%H:%M")
-    set_house(hass, flow=21.0)                    # floor fine: no floor run
+    set_house(hass, room=19.4, flow=21.0)         # floor fine, room above its minimum: no run
     hass.states.async_set("climate.room_a", "heat", {"current_temperature": 15.0, "temperature": 13.0})
     entry = MockConfigEntry(domain=DOMAIN, title="Home EMS", data=DATA, unique_id=DOMAIN, options={
         "bedrooms": f'- entiteit: climate.room_a\n  naam: Room A\n  doel: 17\n  bedtijd: "{bedtime}"\n'})
@@ -141,7 +141,7 @@ async def test_bedroom_below_target_before_bedtime_asks_for_a_run(hass, freezer)
     assert rooms.state == "1" and rooms.attributes["needs_run"] is True
     assert rooms.attributes["rooms"][0]["setpoint"] == 17.0
     target = hass.states.get(TARGET)
-    assert target.attributes["source"] == "bedroom" and float(target.state) == 19.2
+    assert target.attributes["source"] == "bedroom" and float(target.state) == 19.6
 
 
 async def test_negative_price_shows_which_inverter_would_go_off(hass, freezer):
