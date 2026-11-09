@@ -30,6 +30,11 @@ def set_house(hass, *, room=19.0, setpoint=19.0, flow=18.0, hp_w=5.0, grid_w=300
     hass.states.async_set("sensor.grid_power", str(grid_w))
 
 
+# no night window: the tests run at any time of day (the night limits have their own tests)
+NO_NIGHT = {"night_start": "00:00:00", "night_end": "00:00:00"}
+
+
 @pytest.fixture
 def entry() -> MockConfigEntry:
-    return MockConfigEntry(domain=DOMAIN, title="Home EMS", data=DATA, unique_id=DOMAIN)
+    return MockConfigEntry(domain=DOMAIN, title="Home EMS", data=DATA, unique_id=DOMAIN,
+                           options=NO_NIGHT)
