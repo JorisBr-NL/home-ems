@@ -4,9 +4,13 @@ The advice, the anti short-cycling rule and the day planner all want something f
 the same thermostat. The arbiter turns them into one target setpoint per moment, in a
 fixed order of priority:
 
-    switched off > comfort minimum > floor > living room minimum > keep running (minimum
-    run time) > bedroom below target before bedtime > planner > PV surplus > run on to
+    switched off > comfort minimum > floor > keep running (minimum run time) > bedroom
+    below target before bedtime > living room minimum > PV surplus > planner > run on to
     the top > off
+
+The living room minimum is the comfort setpoint by day and the night minimum at night;
+the top is the comfort setpoint + headroom by day (up to the comfort maximum on solar or a
+low price) and the night ceiling at night.
 
 The EMS owns the switch point (v0.10.5). There are two states and nothing in between:
 
@@ -210,8 +214,6 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
         return result(start_safe, "comfort_min", evaluation.reason)
     if evaluation.advice == "run" and evaluation.cause == "floor":
         return result(start_safe, "floor", evaluation.reason)
-    if not running and living_temp <= s.living_min + s.min_lead + 1e-9:
-        return result(start, "minimum", "living room at its minimum: the EMS starts a run")
     if evaluation.advice == "keep_running":
         # also past the top: stopping before the minimum run time is worse
         return result(hold_safe, "keep_running",
@@ -221,6 +223,8 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
         if running:
             return result(hold_safe, "bedroom", "bedroom below target before bedtime: keep the run going")
         return result(start_safe, "bedroom", "bedroom below target before bedtime: short run")
+    if not running and living_temp <= s.living_min + s.min_lead + 1e-9:
+        return result(start, "minimum", "living room at its minimum: the EMS starts a run")
     if evaluation.advice == "run" and evaluation.cause == "pv":
         return result(start_pv, "pv", evaluation.reason)
     if running and evaluation.pv_surplus_w:

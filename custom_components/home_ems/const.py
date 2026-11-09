@@ -41,7 +41,7 @@ OPT_CAPACITY = "capacity_kwh_k"
 # options (v0.9): steady runs in the cold
 OPT_MIN_PAUSE = "min_pause_hours"       # shorter pauses between planned runs are filled
 OPT_RUN_HEADROOM = "run_headroom_k"     # run ceiling = comfort setpoint + this
-OPT_LIVING_MIN = "living_min"           # v0.10.5: the EMS starts a run itself at this room temperature
+OPT_LIVING_MIN = "living_min"           # v0.10.5: night minimum (by day the comfort setpoint)
 OPT_OFF_MARGIN = "off_margin_k"         # off level = living_min - this (tado safety net only)
 OPT_START_BAND = "start_band_k"         # a planned run starts only this far below the top
 OPT_HEAT_RATE = "heat_rate_kw"          # heat per run-hour at 0 C outside (planner)
@@ -67,7 +67,7 @@ OPTION_DEFAULTS = {
     OPT_COMFORT_MAX: 21.5,
     OPT_CAPACITY: 15.0,
     OPT_MIN_PAUSE: 2.0,
-    OPT_RUN_HEADROOM: 0.0,
+    OPT_RUN_HEADROOM: 0.5,
     OPT_LIVING_MIN: 18.0,
     OPT_OFF_MARGIN: 0.5,
     OPT_START_BAND: 0.3,

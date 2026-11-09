@@ -326,9 +326,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
     # ------------------------------------------------------------ arbiter (shadow mode)
 
     def night_now(self, now: datetime | None = None) -> bool:
-        """The night ceiling is set and it is night now (local time)."""
-        if float(self.option(OPT_NIGHT_CEILING) or 0) <= 0:
-            return False
+        """It is night now (local time, the night window; from == until = never night)."""
         try:
             start = time.fromisoformat(str(self.option(OPT_NIGHT_START)))
             end = time.fromisoformat(str(self.option(OPT_NIGHT_END)))
@@ -339,10 +337,19 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
 
     def arbiter_settings(self, now: datetime | None = None) -> ArbiterSettings:
         comfort_min = float(self.option(OPT_COMFORT_MIN))
-        ceiling = float(self.option(OPT_COMFORT_SETPOINT)) + float(self.option(OPT_RUN_HEADROOM))
+        comfort = float(self.option(OPT_COMFORT_SETPOINT))
+        ceiling = comfort + float(self.option(OPT_RUN_HEADROOM))
+        # day: the comfort setpoint is the lower limit; night: the night minimum, and the
+        # night ceiling (if set) as the upper limit
+        living_min = comfort
         night = self.night_now(now)
         if night:
-            ceiling = night_ceiling(ceiling, float(self.option(OPT_NIGHT_CEILING)), comfort_min)
+            living_min = float(self.option(OPT_LIVING_MIN))
+            night_top = float(self.option(OPT_NIGHT_CEILING) or 0)
+            if night_top > 0:
+                ceiling = night_ceiling(ceiling, night_top, comfort_min)
+            else:
+                ceiling = min(ceiling, living_min + float(self.option(OPT_START_BAND)))
         return ArbiterSettings(comfort_min=comfort_min,
                                comfort_max=float(self.option(OPT_COMFORT_MAX)),
                                run_ceiling=ceiling,
@@ -350,7 +357,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
                                gap_max=float(self.option(OPT_GAP_MAX)),
                                boost_margin_w=float(self.option(OPT_BOOST_MARGIN)),
                                low_price=float(self.option(OPT_LOW_PRICE)),
-                               living_min=float(self.option(OPT_LIVING_MIN)),
+                               living_min=living_min,
                                off_margin=float(self.option(OPT_OFF_MARGIN)),
                                start_band=float(self.option(OPT_START_BAND)))
 
