@@ -41,6 +41,15 @@ class Settings:
     # measuring point, it no longer asks for heat itself): below it a run is needed,
     # also in a price peak.
     comfort_min: float = 18.0
+    # The kitchen is a measuring point: at night it is 0.3-0.5 K colder than the living
+    # room, so it counts this far below the comfort minimum. A run for the comfort minimum
+    # goes on until the rooms are `comfort_min_hysteresis` above their limit.
+    kitchen_margin: float = 0.5
+    comfort_min_hysteresis: float = 0.3
+    # The floor rule is relative to the living room minimum of the moment (day: comfort
+    # setpoint, night: night minimum) and off in the night window (the house may cool).
+    floor_reference: float | None = None
+    floor_enabled: bool = True
     # The flowmeter only shows the floor water while the floor pump circulates; below
     # this flow rate the floor margin is not used (standing water).
     pump_on_lph: float = 100.0
@@ -295,27 +304,36 @@ def evaluate(inputs: Inputs, tracker: RunTracker, now: datetime,
 
 def _decide(running, floor_margin, inputs, surplus, peak, tracker, now, settings,
             result) -> Evaluation:
+    living_temp = inputs.living_temp
+    limits = (("living room", living_temp, settings.comfort_min),
+              ("kitchen", inputs.kitchen_temp, settings.comfort_min - settings.kitchen_margin))
     if running:
         duration = tracker.run_duration(now)
         if duration is not None and duration < settings.min_run:
             return result(Advice.KEEP_RUNNING, "run shorter than minimum run time")
+        still_cold = [name for name, temp, limit in limits
+                      if temp is not None and temp < limit + settings.comfort_min_hysteresis]
+        if still_cold:
+            return result(Advice.RUNNING, f"{' and '.join(still_cold)} just above the comfort "
+                          "minimum: keep the run going", "comfort_min")
         return result(Advice.RUNNING, "run in progress")
 
-    living_temp = inputs.living_temp
-    cold = [name for name, temp in (("living room", living_temp), ("kitchen", inputs.kitchen_temp))
-            if temp is not None and temp < settings.comfort_min]
+    cold = [name for name, temp, limit in limits if temp is not None and temp < limit]
     if cold:
         return result(Advice.RUN, f"{' and '.join(cold)} below comfort minimum", "comfort_min")
 
     room_warm = (
         living_temp is not None
-        and living_temp >= settings.comfort_setpoint + settings.floor_rule_band
+        and living_temp >= (settings.comfort_setpoint if settings.floor_reference is None
+                            else settings.floor_reference) + settings.floor_rule_band
     )
-    floor_low = floor_margin is not None and floor_margin < settings.floor_min_margin
+    floor_low = (settings.floor_enabled and floor_margin is not None
+                 and floor_margin < settings.floor_min_margin)
 
     if peak:
         if (
-            floor_margin is not None
+            settings.floor_enabled
+            and floor_margin is not None
             and floor_margin < settings.floor_min_margin - 1.0
             and not room_warm
         ):

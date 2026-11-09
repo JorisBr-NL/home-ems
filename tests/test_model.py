@@ -247,7 +247,7 @@ def test_restore_on_next_day_resets_counters():
 
 def test_kitchen_below_comfort_minimum_asks_for_a_run_also_in_a_peak():
     cold = Inputs(heat_pump_power_w=5.0, flow_temp=21.0, living_temp=19.4, grid_power_w=300.0,
-                  price_now=0.40, day_prices=(0.20,) * 72 + (0.40,) * 24, kitchen_temp=17.8)
+                  price_now=0.40, day_prices=(0.20,) * 72 + (0.40,) * 24, kitchen_temp=17.4)
     result = evaluate(cold, RunTracker(), at(18))
     assert result.advice is Advice.RUN and result.cause == "comfort_min"
     assert "kitchen" in result.reason and result.in_peak
@@ -328,3 +328,34 @@ def test_solar_forecast_for_the_coming_hour():
     assert model.pv_forecast_ok([1.2, 1.1, 1.0, 0.9], 0.4, 650)       # ~650 W expected
     assert not model.pv_forecast_ok([0.5, 0.5, 0.4, 0.4], 0.4, 650)   # ~50 W expected
     assert model.pv_forecast_ok([], 0.4, 650)                          # no forecast: no hold
+
+
+def test_kitchen_counts_half_a_degree_below_the_comfort_minimum():
+    warmish = Inputs(heat_pump_power_w=5.0, flow_temp=21.0, living_temp=19.4, grid_power_w=300.0,
+                     kitchen_temp=17.8)
+    assert evaluate(warmish, RunTracker(), at(12)).cause != "comfort_min"
+
+
+def test_comfort_minimum_run_goes_on_until_a_little_above_the_limit():
+    tracker = RunTracker()
+    off = Inputs(heat_pump_power_w=5.0, flow_temp=21.0, living_temp=19.0, grid_power_w=300.0,
+                 kitchen_temp=17.4)
+    assert evaluate(off, tracker, at(2)).cause == "comfort_min"
+    on = Inputs(heat_pump_power_w=900.0, flow_temp=25.0, living_temp=19.0, grid_power_w=300.0,
+                kitchen_temp=17.6)
+    evaluate(on, tracker, at(2))
+    later = evaluate(on, tracker, at(3))                 # past the minimum run time
+    assert (later.advice, later.cause) == (Advice.RUNNING, "comfort_min")
+    warm = Inputs(heat_pump_power_w=900.0, flow_temp=25.0, living_temp=19.0, grid_power_w=300.0,
+                  kitchen_temp=17.9)
+    assert evaluate(warm, tracker, at(4)).cause is None
+
+
+def test_floor_rule_is_relative_to_the_minimum_and_off_at_night():
+    from dataclasses import replace as _r
+    cold_floor = Inputs(heat_pump_power_w=5.0, flow_temp=17.0, living_temp=18.7, grid_power_w=300.0)
+    night = model.Settings(floor_reference=18.5, floor_enabled=False)
+    assert evaluate(cold_floor, RunTracker(), at(2), night).cause != "floor"
+    day = model.Settings(floor_reference=18.5, floor_enabled=True, floor_rule_band=0.2)
+    assert evaluate(cold_floor, RunTracker(), at(2), day).cause is None      # 18.7 >= 18.5 + 0.2
+    assert evaluate(_r(cold_floor, living_temp=18.6), RunTracker(), at(2), day).cause == "floor"

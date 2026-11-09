@@ -308,3 +308,89 @@ def test_no_solar_start_just_below_the_comfort_maximum():
     assert arbiter.target_setpoint(start, 19.7, False, settings=s).source == "pv"
     t = arbiter.target_setpoint(start, 19.8, False, settings=s)
     assert (t.setpoint, t.source) == (18.5, "idle")
+
+
+# ---------------------------------------------------------------- v0.10.8
+
+
+def test_solar_hold_needs_a_real_surplus_and_never_at_night():
+    s = arbiter.ArbiterSettings(living_min=19.0, run_ceiling=19.5, comfort_max=20.0)
+    noise = ev(Advice.RUNNING, running=True, surplus=300.0)
+    # the coordinator found no steady surplus with sun: the top rules apply
+    t = arbiter.target_setpoint(noise, 19.5, False, settings=s, current_setpoint=19.6, pv_hold=False)
+    assert (t.setpoint, t.source) == (18.5, "idle")
+    night = arbiter.ArbiterSettings(living_min=18.5, run_ceiling=18.8, comfort_max=20.0, night=True)
+    t = arbiter.target_setpoint(noise, 18.8, False, settings=night, current_setpoint=18.9, pv_hold=True)
+    assert (t.setpoint, t.source) == (18.0, "idle")
+    start = ev(Advice.RUN, "pv", surplus=900.0)
+    assert arbiter.target_setpoint(start, 18.6, False, settings=night).source != "pv"
+
+
+def test_comfort_maximum_stops_also_within_the_minimum_run_time():
+    s = arbiter.ArbiterSettings(living_min=19.0, run_ceiling=19.5, comfort_max=20.0)
+    t = arbiter.target_setpoint(ev(Advice.KEEP_RUNNING, running=True), 20.0, False, settings=s,
+                                current_setpoint=20.0)
+    assert (t.setpoint, t.source) == (18.5, "idle")
+
+
+def test_safety_starts_go_just_above_the_room_not_to_the_comfort_maximum():
+    s = arbiter.ArbiterSettings(living_min=19.0, run_ceiling=19.5, comfort_max=21.5)
+    t = arbiter.target_setpoint(ev(Advice.RUN, "floor"), 19.6, False, settings=s)
+    assert t.setpoint == 19.8                                  # above the room, past the top
+    t = arbiter.target_setpoint(ev(Advice.KEEP_RUNNING, running=True), 19.6, False, settings=s,
+                                current_setpoint=19.7)
+    assert t.setpoint == 19.7
+
+
+def test_comfort_minimum_run_is_held_past_the_top():
+    s = arbiter.ArbiterSettings(living_min=18.5, run_ceiling=18.8, night=True)
+    cold = model.Evaluation(advice=Advice.RUNNING, reason="kitchen just above", heat_pump_running=True,
+                            floor_margin=None, pv_surplus_w=0.0, in_peak=False, cause="comfort_min")
+    t = arbiter.target_setpoint(cold, 18.9, False, settings=s, current_setpoint=19.0)
+    assert (t.setpoint, t.source) == (19.0, "comfort_min")
+
+
+def test_bedroom_run_lifts_the_living_room_at_most_a_little_above_the_top():
+    s = arbiter.ArbiterSettings(living_min=19.0, run_ceiling=19.5)
+    run = ev(Advice.RUNNING, running=True)
+    t = arbiter.target_setpoint(run, 19.6, False, settings=s, current_setpoint=19.7, bedroom_call=True)
+    assert (t.setpoint, t.source) == (19.7, "bedroom")
+    t = arbiter.target_setpoint(run, 19.8, False, settings=s, current_setpoint=19.8, bedroom_call=True)
+    assert t.source == "idle"
+
+
+def test_run_latch_bridges_a_compressor_pause_and_the_start():
+    from datetime import datetime, timedelta, timezone
+    t0 = datetime(2026, 11, 9, 10, 0, tzinfo=timezone.utc)
+    grace = timedelta(minutes=10)
+    latch = arbiter.RunLatch()
+    assert latch.running(False, t0, grace) is False
+    latch.update("minimum", t0, 19.5)                           # the EMS starts a run
+    assert latch.running(False, t0 + timedelta(minutes=3), grace) is True   # waiting for the start
+    assert latch.running(True, t0 + timedelta(minutes=5), grace) is True
+    assert latch.running(False, t0 + timedelta(minutes=12), grace) is True  # a pause of 7 min
+    assert latch.running(False, t0 + timedelta(minutes=16), grace) is False # too long
+    latch.update("idle", t0 + timedelta(minutes=16), 19.5)
+    assert latch.since is None
+    again = arbiter.RunLatch.from_dict(arbiter.RunLatch(t0, "pv", 20.0, t0).to_dict())
+    assert (again.since, again.source, again.ceiling) == (t0, "pv", 20.0)
+
+
+def test_until_window_end_wraps_past_midnight():
+    from datetime import time, timedelta
+    assert arbiter.until_window_end(time(3, 0), time(5, 0)) == timedelta(hours=2)
+    assert arbiter.until_window_end(time(21, 0), time(5, 0)) == timedelta(hours=8)
+
+
+def test_pv_boost_resets_after_ten_minutes_without_grid_and_at_night():
+    from datetime import datetime, timedelta, timezone
+    s = arbiter.ArbiterSettings(gap_max=0.6, boost_margin_w=300)
+    b = arbiter.PvBoost(extra=0.3)
+    t0 = datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc)
+    step = timedelta(minutes=5)
+    assert b.update(None, True, t0, step, s) == 0.3
+    assert b.update(None, True, t0 + timedelta(minutes=9), step, s) == 0.3
+    assert b.update(None, True, t0 + timedelta(minutes=11), step, s) == 0.0
+    b = arbiter.PvBoost(extra=0.3)
+    night = arbiter.ArbiterSettings(gap_max=0.6, boost_margin_w=300, night=True)
+    assert b.update(-1000.0, True, t0, step, night) == 0.0

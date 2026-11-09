@@ -127,3 +127,25 @@ def test_small_changes_wait_for_the_minimum_step_but_start_and_stop_do_not():
     # without the room temperature only the step counts
     assert step(state, 19.6, "idle", "t", 19.8, at(10), True, s).status == "steady"
     assert step(state, 19.4, "idle", "t", 19.8, at(10), True, s).write == 19.4
+
+
+def test_write_at_once_when_the_room_catches_up_with_the_setpoint():
+    from datetime import timedelta as _td
+    st = executor.ExecutorState()
+    now = T0
+    st.record_write(19.3, "to_top", now)
+    s = executor.ExecutorSettings()
+    # 2 minutes later the room is at the setpoint: no waiting for the minimum interval
+    a = executor.step(st, 19.4, "to_top", "r", 19.3, now + _td(minutes=2), True, s, living=19.3)
+    assert a.write == 19.4
+    # the room is still below the setpoint: the interval applies
+    a = executor.step(st, 19.4, "to_top", "r", 19.3, now + _td(minutes=2), True, s, living=19.2)
+    assert a.write is None
+
+
+def test_executor_state_roundtrip():
+    st = executor.ExecutorState(last_written=19.2, last_write=T0, last_source="minimum",
+                                override_until=T0, pause_status="error", before=18.5, retries=1)
+    again = executor.ExecutorState.from_dict(st.to_dict())
+    assert (again.last_written, again.last_write, again.last_source, again.override_until,
+            again.pause_status, again.before, again.retries) == (19.2, T0, "minimum", T0, "error", 18.5, 1)

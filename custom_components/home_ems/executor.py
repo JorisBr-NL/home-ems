@@ -69,7 +69,19 @@ class ExecutorState:
             return value.isoformat() if value else None
 
         return {"last_written": self.last_written, "last_write": iso(self.last_write),
-                "last_source": self.last_source, "override_until": iso(self.override_until)}
+                "last_source": self.last_source, "override_until": iso(self.override_until),
+                "pause_status": self.pause_status, "before": self.before, "retries": self.retries}
+
+    @classmethod
+    def from_dict(cls, data: dict | None) -> ExecutorState:
+        def parse(value: str | None) -> datetime | None:
+            return datetime.fromisoformat(value) if value else None
+        data = data or {}
+        return cls(last_written=data.get("last_written"), last_write=parse(data.get("last_write")),
+                   last_source=data.get("last_source"),
+                   override_until=parse(data.get("override_until")),
+                   pause_status=data.get("pause_status") or "override",
+                   before=data.get("before"), retries=int(data.get("retries") or 0))
 
 
 def _same(a: float | None, b: float | None) -> bool:
@@ -145,10 +157,13 @@ def step(state: ExecutorState, target: float | None, source: str, reason: str,
         demand_changes = living is not None and (target > living) != (current > living)
         if not demand_changes:
             return Action(None, "steady", f"{source}: setpoint close enough")
+    caught_up = (current is not None and living is not None
+                 and current <= living + 0.05 and target > living)
     if (
         state.last_write is not None
         and source == state.last_source
         and now - state.last_write < s.min_interval
+        and not caught_up   # the room reached the setpoint: write at once, or tado decides
     ):
         return Action(None, "waiting", f"{source}: next change after the minimum interval")
     return Action(target, "writing", f"{source}: {reason}")

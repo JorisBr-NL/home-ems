@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
@@ -95,10 +96,12 @@ from .const import (
 from .arbiter import (
     ArbiterSettings,
     PvBoost,
+    RunLatch,
     Target,
     in_window,
     night_ceiling,
     target_setpoint,
+    until_window_end,
 )
 from .appliances import StartAdvice, best_start, parse_appliances
 from .bedrooms import Bedroom, BedroomSettings, RoomTarget, parse_rooms, room_targets
@@ -162,6 +165,8 @@ STORAGE_VERSION = 1
 RUN_SOURCES = ("comfort_min", "floor", "minimum", "keep_running", "planner", "pv", "to_top")
 SAVE_DELAY = 60  # seconds
 BOOST_KEEP = timedelta(minutes=15)  # a boost older than this is not taken back after a restart
+LATCH_GRACE = timedelta(minutes=10)  # a gap in the heat pump power this short is still a run
+PRE_DAY = timedelta(hours=2, minutes=30)  # a night run this close to the end of the night gets the day top
 
 type HomeEmsConfigEntry = ConfigEntry[HomeEmsCoordinator]
 
@@ -202,6 +207,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self._slots: list[Slot] = []
         self._surplus_samples: list[tuple[datetime, float]] = []
         self._prev_raised = 0.0
+        self.run_latch = RunLatch()
+        self._pv_hold: bool | None = None
         self.plan_status = PLAN_NO_PRICES
         self._temps: dict[datetime, float] = {}   # hour start (UTC) -> forecast temperature
         self._temps_fetched: datetime | None = None
@@ -216,8 +223,13 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         default = OPTION_DEFAULTS.get(key, CONTROL_DEFAULTS.get(key, BEDROOM_DEFAULTS.get(key)))
         return self.config_entry.options.get(key, default)
 
-    def settings(self) -> Settings:
+    def settings(self, now: datetime | None = None) -> Settings:
+        night = self.night_now(now)
+        floor_reference = (float(self.option(OPT_LIVING_MIN)) if night
+                           else float(self.option(OPT_COMFORT_SETPOINT)))
         return Settings(
+            floor_reference=floor_reference,
+            floor_enabled=not night,
             min_run=timedelta(minutes=float(self.option(OPT_MIN_RUN))),
             floor_min_margin=float(self.option(OPT_FLOOR_MIN_MARGIN)),
             pv_run_threshold_w=float(self.option(OPT_PV_RUN_THRESHOLD)),
@@ -247,13 +259,15 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             now = dt_util.now()
             self.tracker = RunTracker.from_dict(stored, now)
             self._restore_boost(stored.get("boost"), now)
+            self._restore_control(stored, now)
 
     def _stored(self) -> dict[str, Any]:
         """Run state for the store, plus the solar boost and the raise on the thermostat,
         so saving the options (which reloads the integration) does not lose them."""
         return {**self.tracker.to_dict(), "boost": {
             "extra": self.pv_boost.extra, "raised": self._prev_raised,
-            "at": dt_util.now().isoformat()}}
+            "at": dt_util.now().isoformat()},
+            "executor": self.executor.to_dict(), "latch": self.run_latch.to_dict()}
 
     def _restore_boost(self, data: dict | None, now: datetime) -> None:
         """Take the boost back after a reload or a short restart (at most BOOST_KEEP old)."""
@@ -265,6 +279,25 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             return
         self.pv_boost.extra = float(data.get("extra") or 0.0)
         self._prev_raised = float(data.get("raised") or 0.0)
+
+    def _restore_control(self, stored: dict, now: datetime) -> None:
+        """Take back the executor and the run after a reload or a short restart: a pause after
+        a change by hand stays a pause, and a run in progress stays a run."""
+        try:
+            at = datetime.fromisoformat(stored["boost"]["at"])
+        except (KeyError, TypeError, ValueError):
+            return
+        recent = now - at <= BOOST_KEEP
+        saved = ExecutorState.from_dict(stored.get("executor"))
+        if saved.override_until is not None and saved.override_until > now:
+            self.executor.override_until = saved.override_until
+            self.executor.pause_status = saved.pause_status
+        if recent:
+            self.executor.last_written = saved.last_written
+            self.executor.last_write = saved.last_write
+            self.executor.last_source = saved.last_source
+            self.executor.before = saved.before
+            self.run_latch = RunLatch.from_dict(stored.get("latch"))
 
     async def async_save_now(self) -> None:
         """Write the store at once (before an unload or reload)."""
@@ -281,6 +314,15 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         except ValueError:
             return None
 
+    def _power_state(self, entity_id: str | None) -> float | None:
+        """A power sensor in W (sensors in kW or MW are converted)."""
+        value = self._float_state(entity_id)
+        if value is None:
+            return None
+        state = self.hass.states.get(entity_id)
+        unit = str(state.attributes.get("unit_of_measurement") or "").strip() if state else ""
+        return value * {"kW": 1000.0, "MW": 1_000_000.0}.get(unit, 1.0)
+
     def _climate_temperature(self, entity_id: str | None) -> float | None:
         if not entity_id:
             return None
@@ -292,7 +334,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
 
     def _heat_pump_power(self) -> float | None:
         values = [
-            self._float_state(entity_id)
+            self._power_state(entity_id)
             for entity_id in self.config_entry.data.get(CONF_HEAT_PUMP_POWER, [])
         ]
         known = [v for v in values if v is not None]
@@ -308,7 +350,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             heat_pump_power_w=self._heat_pump_power(),
             flow_temp=self._float_state(data.get(CONF_FLOW_TEMPERATURE)),
             living_temp=self._climate_temperature(data.get(CONF_LIVING_CLIMATE)),
-            grid_power_w=self._float_state(data.get(CONF_GRID_POWER)),
+            grid_power_w=self._power_state(data.get(CONF_GRID_POWER)),
             price_now=price_now,
             day_prices=day_prices,
             market_now=prices_today(today, now, "market")[0],
@@ -323,20 +365,20 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         data = self.config_entry.data
         entities = data.get(CONF_BATTERY_POWER) or []
         entities = [entities] if isinstance(entities, str) else entities
-        known = [v for v in (self._float_state(e) for e in entities) if v is not None]
+        known = [v for v in (self._power_state(e) for e in entities) if v is not None]
         sign = 1.0 if data.get(CONF_BATTERY_CHARGE_POSITIVE, True) else -1.0
         return sign * sum(known)
 
     def _pv_power(self) -> float | None:
         """Solar production now: the sum of the inverter sensors, None if not all known."""
-        values = [self._float_state(e) for e in self._pv_entities()]
+        values = [self._power_state(e) for e in self._pv_entities()]
         if not values or any(v is None for v in values):
             return None
         return sum(values)
 
     async def _async_update_data(self) -> Evaluation:
         now = dt_util.now()
-        settings = self.settings()
+        settings = self.settings(now)
         self.tracker.settings = settings
         inputs = self.read_inputs(now)
         evaluation = evaluate(inputs, self.tracker, now, settings)
@@ -349,7 +391,10 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             settings.pv_run_threshold_w, self._pv_forecast_ok(now))
         self._store.async_delay_save(self._stored, SAVE_DELAY)
         if self.plan is None or now - self.plan.made >= REPLAN_INTERVAL:
-            await self._async_replan(now)
+            try:
+                await self._async_replan(now)
+            except Exception:  # the planner must never stop the arbiter and the executor
+                _LOGGER.exception("Could not make the plan")
         if self._overview_made is None or now - self._overview_made >= OVERVIEW_REFRESH:
             self._overview_made = now
             try:
@@ -360,13 +405,37 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         # the batteries charging is power the heat pump could use (heat comes first)
         signal = (inputs.grid_power_w - inputs.battery_charge_w
                   if inputs.grid_power_w is not None else None)
-        self.pv_boost.update(signal, evaluation.heat_pump_running, now,
-                             timedelta(minutes=float(self.option(OPT_WRITE_INTERVAL))),
-                             self.arbiter_settings())
-        self.target = self._target(evaluation, inputs.living_temp, now)
-        self._curtail(inputs, now)
+        # the run as the EMS sees it: a short gap in the heat pump power is still a run
+        steer = replace(evaluation, heat_pump_running=self.run_latch.running(
+            evaluation.heat_pump_running, now, LATCH_GRACE))
+        s = self.arbiter_settings(now)
+        if inputs.pv_power_w is not None and inputs.pv_power_w < 50:
+            self.pv_boost.reset()   # no sun: no solar boost (also after a grid dropout)
+        self.pv_boost.update(signal, steer.heat_pump_running, now,
+                             timedelta(minutes=float(self.option(OPT_WRITE_INTERVAL))), s)
+        self._pv_hold = self._solar_hold(inputs, now, s)
+        self.target = self._target(steer, inputs.living_temp, now)
+        self.run_latch.update(self.target.source, now, s.run_ceiling)
+        try:
+            self._curtail(inputs, now)
+        except Exception:  # curtailment and appliances must never stop the executor
+            _LOGGER.exception("Could not work out curtailment and appliances")
         await self._async_execute(now)
         return evaluation
+
+    def _solar_hold(self, inputs: Inputs, now: datetime, s: ArbiterSettings) -> bool:
+        """A run may go on on solar: a steady 5-minute surplus with real sun, not at night.
+        Small differences between the grid meter and the heat pump power gave a "surplus"
+        of a few hundred watts in the dark."""
+        if s.night:
+            return False
+        threshold = max(s.boost_margin_w, float(self.option(OPT_PV_RUN_THRESHOLD)) / 2)
+        if average_surplus(self._surplus_samples, now) < threshold:
+            return False
+        if inputs.pv_power_w is not None:
+            base = float(self.option(OPT_BASE_LOAD)) * 1000
+            return inputs.pv_power_w >= base + threshold
+        return True
 
     # ------------------------------------------------------------ arbiter (shadow mode)
 
@@ -380,6 +449,13 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         moment = dt_util.as_local(now or dt_util.now()).time()
         return in_window(moment, start, end)
 
+    def _to_night_end(self, now: datetime | None = None) -> timedelta:
+        try:
+            end = time.fromisoformat(str(self.option(OPT_NIGHT_END)))
+        except ValueError:
+            return timedelta(days=1)
+        return until_window_end(dt_util.as_local(now or dt_util.now()).time(), end)
+
     def arbiter_settings(self, now: datetime | None = None) -> ArbiterSettings:
         comfort_min = float(self.option(OPT_COMFORT_MIN))
         comfort = float(self.option(OPT_COMFORT_SETPOINT))
@@ -390,11 +466,19 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         night = self.night_now(now)
         if night:
             living_min = float(self.option(OPT_LIVING_MIN))
+            day_top = ceiling
             night_top = float(self.option(OPT_NIGHT_CEILING) or 0)
             if night_top > 0:
                 ceiling = night_ceiling(ceiling, night_top, comfort_min)
             else:
                 ceiling = min(ceiling, living_min + float(self.option(OPT_START_BAND)))
+            # a run near the end of the night goes on to the day top: one run instead of a
+            # night run and a new start when the day limits begin
+            if self._to_night_end(now) <= PRE_DAY:
+                ceiling = day_top
+        if self.run_latch.since is not None and self.run_latch.ceiling is not None:
+            # a run keeps the top it started with (a day run is not cut at 20:00)
+            ceiling = max(ceiling, self.run_latch.ceiling)
         return ArbiterSettings(comfort_min=comfort_min,
                                comfort_max=float(self.option(OPT_COMFORT_MAX)),
                                run_ceiling=ceiling,
@@ -416,18 +500,23 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         args = (evaluation, living_temp, plan_now, self.enabled, self.arbiter_settings(now),
                 self.current_setpoint())
         target = target_setpoint(*args, price_now=self._price_now, pv_extra=self.pv_boost.extra,
-                                 prev_raised=self._prev_raised)
+                                 prev_raised=self._prev_raised, pv_hold=self._pv_hold)
         rooms = self.bedrooms() if self.enabled else []
         if not rooms:
             self.room_targets = []
             return target
         flowing = bool(evaluation.heat_pump_running) or target.source in RUN_SOURCES
         temps = {r.entity_id: self._climate_temperature(r.entity_id) for r in rooms}
-        self.room_targets = room_targets(rooms, temps, now, flowing, self.bedroom_settings())
-        if any(r.needs_run for r in self.room_targets):
+        bs = self.bedroom_settings()
+        self.room_targets = room_targets(rooms, temps, now, flowing, bs)
+        # a bedroom run goes on until the rooms are warm enough (not stop, restart, stop)
+        bedroom_run = (self.run_latch.source == "bedroom" and evaluation.heat_pump_running
+                       and any(r.setpoint > bs.min_temp and r.temperature is not None
+                               and r.temperature < r.setpoint - bs.margin for r in self.room_targets))
+        if bedroom_run or any(r.needs_run for r in self.room_targets):
             target = target_setpoint(*args, bedroom_call=True, price_now=self._price_now,
                                      pv_extra=self.pv_boost.extra,
-                                 prev_raised=self._prev_raised)
+                                     prev_raised=self._prev_raised, pv_hold=self._pv_hold)
         return target
 
     def bedrooms(self) -> list[Bedroom]:
