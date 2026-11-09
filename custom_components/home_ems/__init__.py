@@ -29,4 +29,6 @@ async def _async_reload(hass: HomeAssistant, entry: HomeEmsConfigEntry) -> None:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: HomeEmsConfigEntry) -> bool:
+    # keep the run state and the solar boost for the reload that follows (saving options)
+    await entry.runtime_data.async_save_now()
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

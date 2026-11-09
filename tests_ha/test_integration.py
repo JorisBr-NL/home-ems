@@ -190,3 +190,16 @@ async def test_reconfigure_changes_the_thermostat_and_keeps_the_options(recorder
     assert result["type"] is FlowResultType.ABORT and result["reason"] == "reconfigure_successful"
     assert entry.data["living_climate"] == "climate.other_thermostat"
     assert entry.options["comfort_setpoint"] == 19.5
+
+
+async def test_solar_boost_survives_a_reload(recorder_mock, hass, entry):
+    set_house(hass)
+    await _setup(hass, entry)
+    coordinator = entry.runtime_data
+    coordinator.pv_boost.extra = 0.3
+    coordinator._prev_raised = 0.3
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.runtime_data is not coordinator
+    assert entry.runtime_data.pv_boost.extra == 0.3
+    assert entry.runtime_data._prev_raised == 0.3
