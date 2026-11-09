@@ -58,7 +58,12 @@ from .const import (
     OPT_PRICE_ENTITY,
     OPT_PV_POWER,
     OPT_PV_RUN_THRESHOLD,
+    OPT_HEAT_RATE,
+    OPT_HEAT_RATE_SLOPE,
+    OPT_LIVING_MIN,
     OPT_NIGHT_CEILING,
+    OPT_OFF_MARGIN,
+    OPT_START_BAND,
     OPT_NIGHT_END,
     OPT_NIGHT_START,
     OPT_RUN_HEADROOM,
@@ -143,7 +148,7 @@ def _write_files(folder: str, files: dict[str, str]) -> None:
 
 STORAGE_VERSION = 1
 # arbiter sources that start or hold a run: warm water flows to the bedrooms
-RUN_SOURCES = ("comfort_min", "floor", "keep_running", "planner", "pv")
+RUN_SOURCES = ("comfort_min", "floor", "minimum", "keep_running", "planner", "pv", "to_top")
 SAVE_DELAY = 60  # seconds
 
 type HomeEmsConfigEntry = ConfigEntry[HomeEmsCoordinator]
@@ -216,6 +221,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             tz=dt_util.get_default_time_zone(),
             capacity_kwh_k=float(self.option(OPT_CAPACITY)),
             target_temp=float(self.option(OPT_COMFORT_SETPOINT)),
+            heat_rate_kw=float(self.option(OPT_HEAT_RATE)),
+            heat_rate_slope=float(self.option(OPT_HEAT_RATE_SLOPE)),
             gas_price_m3=self._float_state(self.option(OPT_GAS_ENTITY)),
         )
 
@@ -343,7 +350,9 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
                                gap_max=float(self.option(OPT_GAP_MAX)),
                                boost_margin_w=float(self.option(OPT_BOOST_MARGIN)),
                                low_price=float(self.option(OPT_LOW_PRICE)),
-                               idle_setpoint=comfort_min)
+                               living_min=float(self.option(OPT_LIVING_MIN)),
+                               off_margin=float(self.option(OPT_OFF_MARGIN)),
+                               start_band=float(self.option(OPT_START_BAND)))
 
     def _target(self, evaluation: Evaluation, living_temp: float | None, now: datetime) -> Target:
         plan_now = bool(self.plan and self.plan.running_now(now))

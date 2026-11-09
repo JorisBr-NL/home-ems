@@ -65,15 +65,18 @@ def test_run_on_solar_is_held_while_exporting():
     assert (t.setpoint, t.source, t.boost, t.boost_k) == (19.8, "pv", "solar surplus", 0.2)
 
 
-def test_idle_goes_to_the_comfort_minimum():
+def test_off_level_is_below_the_living_room_minimum():
     t = target(ev(Advice.WAIT), living=19.3)
-    assert (t.setpoint, t.source) == (18.0, "idle")
-    assert target(ev(Advice.RUNNING, running=True), living=19.3).reason.startswith("run not needed")
+    assert (t.setpoint, t.source) == (17.5, "idle")          # minimum 18.0 - 0.5
+    s = arbiter.ArbiterSettings(living_min=18.5, off_margin=0.5)
+    assert arbiter.target_setpoint(ev(Advice.WAIT), 19.3, False, settings=s).setpoint == 18.0
+    low = arbiter.ArbiterSettings(living_min=15.2, off_margin=1.0)
+    assert arbiter.target_setpoint(ev(Advice.WAIT), 19.3, False, settings=low).setpoint == 15.0
 
 
-def test_target_stays_within_the_comfort_band():
+def test_target_stays_below_the_comfort_maximum():
     assert target(ev(Advice.RUN, "pv"), living=21.6).setpoint == 21.5
-    assert target(ev(Advice.RUN, "comfort_min"), living=16.0).setpoint == 18.0
+    assert target(ev(Advice.RUN, "comfort_min"), living=16.0).setpoint == 16.2
 
 
 def test_differs_from_current_setpoint():
@@ -82,22 +85,65 @@ def test_differs_from_current_setpoint():
     assert not target(ev(Advice.WAIT), enabled=False).differs_from(19.0)
 
 
-def test_setpoint_follows_the_room_during_a_run():
+def test_setpoint_follows_the_room_up_never_down():
     run = ev(Advice.RUNNING, running=True)
     t = arbiter.target_setpoint(run, 19.2, True, current_setpoint=19.4)
-    assert (t.setpoint, t.source) == (19.3, "planner")      # room 19.2: back to + 0.1
-    t = arbiter.target_setpoint(run, 19.3, True, current_setpoint=19.4)
-    assert t.setpoint == 19.4                                # already right
-    # with a keep band the current setpoint is kept while it still asks for heat
-    band = arbiter.ArbiterSettings(keep_band=0.2)
-    t = arbiter.target_setpoint(run, 19.3, True, settings=band, current_setpoint=19.5)
-    assert t.setpoint == 19.5
+    assert (t.setpoint, t.source) == (19.4, "planner")      # room fell back: setpoint stays
     t = arbiter.target_setpoint(run, 19.4, True, current_setpoint=19.4)
     assert t.setpoint == 19.5                                # room reached it: one step up
-    t = arbiter.target_setpoint(run, 19.0, True, current_setpoint=19.6)
-    assert t.setpoint == 19.1                                # gap too large: back to + 0.1
+    t = arbiter.target_setpoint(run, 18.4, True, current_setpoint=18.6)
+    assert t.setpoint == 18.6                                # cold start: no chasing the room down
     t = arbiter.target_setpoint(ev(Advice.WAIT), 19.0, False, current_setpoint=19.2)
-    assert t.setpoint == 18.0                                # idle is not kept
+    assert (t.setpoint, t.source) == (17.5, "idle")          # off is not kept
+
+
+def test_living_room_minimum_starts_a_run_a_little_above_it():
+    s = arbiter.ArbiterSettings(living_min=18.5, run_ceiling=19.0)
+    t = arbiter.target_setpoint(ev(Advice.WAIT), 18.6, False, settings=s)
+    assert (t.setpoint, t.source) == (18.8, "minimum")
+    t = arbiter.target_setpoint(ev(Advice.WAIT), 18.7, False, settings=s)
+    assert (t.setpoint, t.source) == (18.0, "idle")
+    # at night the run still climbs to the minimum + start band, not to an equal ceiling
+    night = arbiter.ArbiterSettings(living_min=18.5, run_ceiling=18.5, night=True)
+    run = ev(Advice.RUNNING, running=True)
+    t = arbiter.target_setpoint(run, 18.6, False, settings=night, current_setpoint=18.7)
+    assert (t.setpoint, t.source) == (18.7, "to_top")
+    t = arbiter.target_setpoint(run, 18.8, False, settings=night, current_setpoint=18.8)
+    assert (t.setpoint, t.source) == (18.0, "idle")
+
+
+def test_run_stops_cleanly_at_the_top():
+    s = arbiter.ArbiterSettings(living_min=18.5, run_ceiling=19.0)
+    run = ev(Advice.RUNNING, running=True)
+    t = arbiter.target_setpoint(run, 18.9, True, settings=s, current_setpoint=19.0)
+    assert (t.setpoint, t.source) == (19.0, "planner")
+    t = arbiter.target_setpoint(run, 19.0, True, settings=s, current_setpoint=19.0)
+    assert (t.setpoint, t.source) == (18.0, "idle")          # never left at setpoint = room
+    assert "top" in t.reason
+    # before the minimum run time the run is held, also past the top
+    t = arbiter.target_setpoint(ev(Advice.KEEP_RUNNING, running=True), 19.0, True, settings=s,
+                                current_setpoint=19.0)
+    assert (t.setpoint, t.source) == (19.1, "keep_running")
+
+
+def test_planned_run_starts_only_with_room_to_climb():
+    s = arbiter.ArbiterSettings(living_min=18.5, run_ceiling=19.0, start_band=0.3)
+    t = arbiter.target_setpoint(ev(Advice.WAIT), 18.7, True, settings=s)
+    assert (t.setpoint, t.source) == (18.9, "planner")
+    t = arbiter.target_setpoint(ev(Advice.WAIT), 18.8, True, settings=s)
+    assert (t.setpoint, t.source) == (18.0, "idle")
+    assert "close to the top" in t.reason
+
+
+def test_a_run_goes_on_to_the_top_after_the_plan_ends_except_in_a_price_peak():
+    s = arbiter.ArbiterSettings(living_min=18.5, run_ceiling=19.0)
+    run = ev(Advice.RUNNING, running=True)
+    t = arbiter.target_setpoint(run, 18.8, False, settings=s, current_setpoint=18.9)
+    assert (t.setpoint, t.source) == (18.9, "to_top")
+    peak = model.Evaluation(advice=Advice.RUNNING, reason="test", heat_pump_running=True,
+                            floor_margin=None, pv_surplus_w=0.0, in_peak=True)
+    t = arbiter.target_setpoint(peak, 18.8, False, settings=s, current_setpoint=18.9)
+    assert (t.setpoint, t.source) == (18.0, "idle")
 
 
 def test_bedroom_call_starts_or_holds_a_run_after_floor_and_keep_running():
@@ -114,10 +160,8 @@ def test_runs_stay_below_the_ceiling_except_on_solar():
     t = arbiter.target_setpoint(ev(Advice.RUN, "floor"), 19.95, False, settings=s)
     assert t.setpoint == 20.0
     run = ev(Advice.RUNNING, running=True)
-    # planned run: the room reached the ceiling, no higher setpoint
-    assert arbiter.target_setpoint(run, 20.0, True, settings=s, current_setpoint=20.0).setpoint == 20.0
     # a setpoint above the ceiling (set by hand earlier) is not kept
-    assert arbiter.target_setpoint(run, 19.6, True, settings=s, current_setpoint=20.4).setpoint == 19.7
+    assert arbiter.target_setpoint(run, 19.6, True, settings=s, current_setpoint=20.4).setpoint == 20.0
     # on solar surplus the heat may go into the house up to the comfort maximum
     pv = ev(Advice.RUNNING, running=True, surplus=500.0)
     assert arbiter.target_setpoint(pv, 20.3, False, settings=s, pv_extra=0.2).setpoint == 20.6
@@ -147,7 +191,7 @@ def test_low_price_gives_the_largest_gap():
 def test_no_boost_on_idle():
     s = arbiter.ArbiterSettings(low_price=0.20)
     t = arbiter.target_setpoint(ev(Advice.WAIT), 19.0, False, settings=s, price_now=0.10)
-    assert (t.source, t.setpoint, t.boost) == ("idle", 18.0, None)
+    assert (t.source, t.setpoint, t.boost) == ("idle", 17.5, None)
 
 
 def test_boost_function():
@@ -202,9 +246,9 @@ def test_night_ceiling_lets_the_house_cool():
     assert arbiter.night_ceiling(19.2, 19.5, 18.0) == 19.2   # never above the day ceiling
     s = arbiter.ArbiterSettings(run_ceiling=18.5, night=True)
     run = ev(Advice.RUNNING, running=True)
-    # a planned run with the room above the night ceiling: the setpoint drops below the room
+    # a planned run with the room above the night ceiling: the run stops (off level)
     t = arbiter.target_setpoint(run, 19.4, True, settings=s, current_setpoint=19.5)
-    assert t.setpoint == 18.5
+    assert (t.setpoint, t.source) == (17.5, "idle")
     # at night a low price does not lift the ceiling to the comfort maximum
     cheap = arbiter.ArbiterSettings(run_ceiling=18.5, night=True, low_price=0.20)
     assert arbiter.target_setpoint(run, 18.3, True, settings=cheap, price_now=0.10).setpoint == 18.5

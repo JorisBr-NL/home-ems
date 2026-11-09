@@ -268,3 +268,21 @@ def test_run_soon_looks_ahead_within_the_pause():
     assert p.run_soon(T0 + timedelta(minutes=30), two)       # run at 02:00, 1.5 h away
     assert not p.run_soon(T0 - timedelta(hours=1), two)      # 3 h away
     assert not p.run_soon(T0 + timedelta(hours=2, minutes=30), two)   # in progress: not "soon"
+
+
+def test_heat_rate_follows_the_outdoor_temperature():
+    s = planner.PlannerSettings(heat_rate_kw=7.0, heat_rate_slope=0.4)
+    assert planner.heat_rate_at(0.0, s) == 7.0
+    assert abs(planner.heat_rate_at(9.0, s) - 3.4) < 1e-9
+    assert planner.heat_rate_at(20.0, s) == s.heat_rate_min
+    assert planner.heat_rate_at(5.0, planner.PlannerSettings()) == 2.9   # slope 0: as before
+
+
+def test_a_stronger_heat_pump_needs_fewer_run_hours():
+    start = datetime(2026, 11, 9, 0, 0, tzinfo=timezone.utc)
+    slots = [planner.Slot(start + i * planner.QUARTER, 0.25, temp=5.0) for i in range(96)]
+    weak = planner.plan(slots, start, planner.PlannerSettings())
+    strong = planner.plan(slots, start, planner.PlannerSettings(heat_rate_kw=7.0, heat_rate_slope=0.4))
+    hours = lambda p: sum((r.end - r.start).total_seconds() for r in p.runs) / 3600
+    assert hours(strong) < hours(weak)
+    assert abs(sum(r.heat_kwh for r in strong.runs) - 5.0 * hours(strong)) < 1e-6

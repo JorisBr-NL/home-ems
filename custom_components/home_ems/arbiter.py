@@ -4,18 +4,31 @@ The advice, the anti short-cycling rule and the day planner all want something f
 the same thermostat. The arbiter turns them into one target setpoint per moment, in a
 fixed order of priority:
 
-    switched off > comfort minimum > floor > keep running (minimum run time)
-    > bedroom below target before bedtime > planner > PV surplus (start, or hold while still exporting) > idle
+    switched off > comfort minimum > floor > living room minimum > keep running (minimum
+    run time) > bedroom below target before bedtime > planner > PV surplus > run on to
+    the top > off
 
-Runs stay below a ceiling (comfort setpoint + headroom), except on solar surplus.
+The EMS owns the switch point (v0.10.5). There are two states and nothing in between:
+
+- off: the setpoint is the living room minimum minus a margin, so tado never asks for
+  heat by itself (only as a safety net when the EMS or Home Assistant is down);
+- on: the EMS starts the run with a setpoint just above the room and moves it up with the
+  room, never down. A run goes on until the room reaches the top (comfort setpoint +
+  headroom, or the night ceiling), then the setpoint drops to the off level at once. A
+  setpoint equal to the room is never left standing: tado and the heat pump would then
+  start and stop on their own.
+
+A planned run only starts while the room is at least `start_band` below the top, so a run
+has room to climb and lasts long (heat pumps like long runs at low power). The living
+room minimum starts a run by itself, a little above the minimum, because the room keeps
+cooling for a while after the start (the water and the floor warm up first).
 
 Runs are started and held with a setpoint just above the room, because tado modulates
 on that gap (small gap = low compressor speed = higher COP). Under a low price the gap is
 the largest gap. On solar the gap follows the grid meter (`PvBoost`): one step up while
 power still flows out, one step down while power comes in, so the heat pump settles where
 it uses the solar power and no grid power. Otherwise the gap stays small and the heat pump
-runs gently. During a run the setpoint follows the room up and down (room + hold offset),
-so the room may also cool down slowly while one heat pump runs at its lowest power.
+runs gently. During a run the setpoint follows the room up only (room + hold offset).
 """
 from __future__ import annotations
 
@@ -27,19 +40,23 @@ if TYPE_CHECKING:  # no runtime import, so the tests can load this file on its o
     from .model import Evaluation
 
 
+OFF_FLOOR = 15.0   # the off level never goes below this (frost and comfort safety)
+
+
 @dataclass(frozen=True)
 class ArbiterSettings:
     comfort_min: float = 18.0
     comfort_max: float = 21.5
     start_offset: float = 0.2   # start a run: this far above the room
     hold_offset: float = 0.1    # keep a run going: just above the room
-    # No run wanted: the setpoint goes to the comfort minimum, so tado itself only
-    # asks for heat as a safety net and the EMS decides when runs happen.
-    idle_setpoint: float = 18.0
-    # keep the current setpoint during a run while it is above the room and at most this
-    # far above the wanted value (0 = the setpoint follows the room up and down, so the
-    # gap stays small and the heat pump runs at low power)
-    keep_band: float = 0.0
+    # Living room minimum: the EMS starts a run itself at this temperature (plus
+    # `min_lead`). Off level = minimum - off_margin: no run wanted, tado only asks for heat
+    # as a safety net and the EMS decides when runs happen.
+    living_min: float = 18.0
+    off_margin: float = 0.5
+    min_lead: float = 0.1
+    # a planned run starts only while the room is at least this far below the top
+    start_band: float = 0.3
     # Highest setpoint for a run that is not on solar (comfort setpoint + headroom). The
     # setpoint follows the room up during a run; without a ceiling a long run would
     # push the room up to the comfort maximum. Runs on solar may go higher (storage).
@@ -60,7 +77,8 @@ class ArbiterSettings:
 @dataclass(frozen=True)
 class Target:
     setpoint: float | None   # None = the EMS has no target (off or no data)
-    source: str              # off, unknown, comfort_min, floor, keep_running, bedroom, planner, pv, idle
+    source: str              # off, unknown, comfort_min, floor, minimum, keep_running, bedroom,
+                             # planner, pv, to_top, idle
     reason: str
     boost: str | None = None  # "solar surplus" or "low price" when the gap was raised
     boost_k: float = 0.0      # how far the gap was raised above the normal gap
@@ -135,7 +153,8 @@ def in_window(moment: time, start: time, end: time) -> bool:
 
 def night_ceiling(day_ceiling: float, night: float, comfort_min: float) -> float:
     """Run ceiling at night: the night value, never below the comfort minimum and never
-    above the day ceiling."""
+    above the day ceiling. (A run still climbs to at least the living room minimum plus
+    the start band, see target_setpoint.)"""
     return min(day_ceiling, max(night, comfort_min))
 
 
@@ -150,17 +169,6 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
     if evaluation.advice == "unknown" or living_temp is None:
         return Target(None, "unknown", "no heat pump power or living room temperature")
 
-    def clamp(value: float, top: float | None = None) -> float:
-        top = s.comfort_max if top is None else min(top, s.comfort_max)
-        return round(min(top, max(s.comfort_min, value)), 1)
-
-    def keep(value: float, top: float) -> float:
-        # the current setpoint still asks for heat with a small gap: leave it as it is
-        if (current_setpoint is not None and living_temp < current_setpoint
-                and current_setpoint <= min(value + s.keep_band, top, s.comfort_max)):
-            return current_setpoint
-        return value
-
     why, extra = boost(pv_extra, price_now, s)
 
     def gap(base: float) -> float:
@@ -168,14 +176,25 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
             return max(base, s.gap_max)
         return max(base, min(s.gap_max, base + extra))
 
-    # with a boost the heat may go up to the comfort maximum (stored in the house)
+    # with a boost the heat may go up to the comfort maximum (stored in the house); a run
+    # always has room to climb above the minimum
     top = s.comfort_max if why and not s.night else s.run_ceiling
-    start = keep(clamp(living_temp + gap(s.start_offset), top), top)
-    hold = keep(clamp(living_temp + gap(s.hold_offset), top), top)
-    # on solar surplus up to the comfort maximum: heat stored in the house
-    start_pv = keep(clamp(living_temp + gap(s.start_offset)), s.comfort_max)
-    hold_pv = keep(clamp(living_temp + gap(s.hold_offset)), s.comfort_max)
-    running = evaluation.heat_pump_running
+    top = min(s.comfort_max, max(top, s.living_min + s.start_band))
+    off = round(max(OFF_FLOOR, s.living_min - s.off_margin), 1)
+    running = bool(evaluation.heat_pump_running)
+
+    def on(base: float, ceiling: float) -> float:
+        """Setpoint for a run: just above the room, never lower than the setpoint that is
+        already asking for heat (it follows the room up, not down), at most `ceiling`."""
+        value = living_temp + gap(base)
+        if current_setpoint is not None and current_setpoint > living_temp:
+            value = max(value, current_setpoint)
+        return round(min(value, ceiling, s.comfort_max), 1)
+
+    start, hold = on(s.start_offset, top), on(s.hold_offset, top)
+    start_pv, hold_pv = on(s.start_offset, s.comfort_max), on(s.hold_offset, s.comfort_max)
+    at_top = living_temp >= top
+    room_to_climb = living_temp <= top - s.start_band + 1e-9
 
     def result(setpoint: float, source: str, reason: str) -> Target:
         if source == "idle":
@@ -187,23 +206,32 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
         return result(start, "comfort_min", evaluation.reason)
     if evaluation.advice == "run" and evaluation.cause == "floor":
         return result(start, "floor", evaluation.reason)
+    if not running and living_temp <= s.living_min + s.min_lead + 1e-9:
+        return result(start, "minimum", "living room at its minimum: the EMS starts a run")
     if evaluation.advice == "keep_running":
-        return result(hold, "keep_running", "hold the run until the minimum run time")
+        # also past the top: stopping before the minimum run time is worse
+        return result(on(s.hold_offset, s.comfort_max), "keep_running",
+                      "hold the run until the minimum run time")
     if bedroom_call:
         # warm water only reaches the bedrooms while the living room asks for heat
         if running:
             return result(hold, "bedroom", "bedroom below target before bedtime: keep the run going")
         return result(start, "bedroom", "bedroom below target before bedtime: short run")
-    if plan_run_now:
-        if running:
-            return result(hold, "planner", "planned run in progress")
-        return result(start, "planner", "planned run starts")
     if evaluation.advice == "run" and evaluation.cause == "pv":
         return result(start_pv, "pv", evaluation.reason)
     if running and evaluation.pv_surplus_w:
         # still exporting while the heat pump runs: a long run on solar is the cheapest heat
         return result(hold_pv, "pv", "run on solar surplus: keep it going")
-    idle = clamp(s.idle_setpoint)
+    if running and at_top:
+        return result(off, "idle", f"room reached the top ({top:.1f}): stop the run")
+    if plan_run_now:
+        if running:
+            return result(hold, "planner", "planned run in progress")
+        if room_to_climb:
+            return result(start, "planner", "planned run starts")
+        return result(off, "idle", f"planned run, but the room is close to the top ({top:.1f}): wait")
+    if running and not evaluation.in_peak:
+        return result(hold, "to_top", f"run on until the room reaches the top ({top:.1f})")
     if running:
-        return result(idle, "idle", "run not needed any more: let it stop")
-    return result(idle, "idle", evaluation.reason)
+        return result(off, "idle", "price peak: let the run stop")
+    return result(off, "idle", evaluation.reason)
