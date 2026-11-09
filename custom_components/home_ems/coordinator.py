@@ -61,6 +61,7 @@ from .const import (
     OPT_PV_RUN_THRESHOLD,
     OPT_HEAT_RATE,
     OPT_HEAT_RATE_SLOPE,
+    OPT_PLANNER_MODEL,
     OPT_LIVING_MIN,
     OPT_NIGHT_CEILING,
     OPT_OFF_MARGIN,
@@ -130,6 +131,7 @@ from .overview import (
     years_csv,
 )
 from .planner import QUARTER, Plan, PlannerSettings, Slot, build_slots, hour_of, plan
+from .planner_model import ModelSettings, plan_with_model
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -209,6 +211,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self._prev_raised = 0.0
         self.run_latch = RunLatch()
         self._pv_hold: bool | None = None
+        self.model_plan: Plan | None = None
         self.plan_status = PLAN_NO_PRICES
         self._temps: dict[datetime, float] = {}   # hour start (UTC) -> forecast temperature
         self._temps_fetched: datetime | None = None
@@ -456,12 +459,13 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             return timedelta(days=1)
         return until_window_end(dt_util.as_local(now or dt_util.now()).time(), end)
 
-    def arbiter_settings(self, now: datetime | None = None) -> ArbiterSettings:
+    def limits(self, now: datetime | None = None) -> tuple[float, float, bool]:
+        """Lower limit, top and night for a moment: the control and the model planner both
+        use this. Day: comfort setpoint to comfort setpoint + headroom; night: the night
+        minimum to the night ceiling (the day top in the last part of the night)."""
         comfort_min = float(self.option(OPT_COMFORT_MIN))
         comfort = float(self.option(OPT_COMFORT_SETPOINT))
         ceiling = comfort + float(self.option(OPT_RUN_HEADROOM))
-        # day: the comfort setpoint is the lower limit; night: the night minimum, and the
-        # night ceiling (if set) as the upper limit
         living_min = comfort
         night = self.night_now(now)
         if night:
@@ -476,6 +480,25 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             # night run and a new start when the day limits begin
             if self._to_night_end(now) <= PRE_DAY:
                 ceiling = day_top
+        ceiling = min(float(self.option(OPT_COMFORT_MAX)),
+                      max(ceiling, living_min + float(self.option(OPT_START_BAND))))
+        return living_min, ceiling, night
+
+    def _model_limits(self, moment: datetime) -> tuple[float, float, float]:
+        """Lower limit, top and storage top (comfort maximum by day) for the model planner."""
+        low, top, night = self.limits(moment)
+        return low, top, top if night else float(self.option(OPT_COMFORT_MAX))
+
+    def arbiter_settings(self, now: datetime | None = None) -> ArbiterSettings:
+        comfort_min = float(self.option(OPT_COMFORT_MIN))
+        living_min, ceiling, night = self.limits(now)
+        if (not night and self.plan is not None and self.plan.model
+                and bool(self.option(OPT_PLANNER_MODEL))):
+            moment = now or dt_util.now()
+            current = next((r for r in self.plan.runs if r.start <= moment < r.end), None)
+            if current is not None and current.reason == "store":
+                # a planned storage run (cheap window before a peak) goes on to the comfort maximum
+                ceiling = float(self.option(OPT_COMFORT_MAX))
         if self.run_latch.since is not None and self.run_latch.ceiling is not None:
             # a run keeps the top it started with (a day run is not cut at 20:00)
             ceiling = max(ceiling, self.run_latch.ceiling)
@@ -642,8 +665,21 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         living = self._climate_temperature(self.config_entry.data.get(CONF_LIVING_CLIMATE))
         # a run in progress stays in the plan until its planned end
         current = next((r for r in self.plan.runs if r.start <= now < r.end), None) if self.plan else None
-        self.plan = plan(slots, now, self.planner_settings(), self.tracker.last_run_end, living,
-                         keep_until=current.end if current else None)
+        budget = plan(slots, now, self.planner_settings(), self.tracker.last_run_end, living,
+                      keep_until=current.end if current else None)
+        try:
+            self.model_plan = plan_with_model(
+                slots, now, living, self._model_limits,
+                self.planner_settings(),
+                ModelSettings(min_run=timedelta(minutes=float(self.option(OPT_MIN_RUN))),
+                              start_band=float(self.option(OPT_START_BAND)),
+                              reference_temp=float(self.option(OPT_COMFORT_SETPOINT))),
+                running=self.run_latch.since is not None)
+        except Exception:  # the model planner is new: it must never take the old one down
+            _LOGGER.exception("Could not make the plan with the house model")
+            self.model_plan = None
+        use_model = bool(self.option(OPT_PLANNER_MODEL)) and self.model_plan is not None
+        self.plan = self.model_plan if use_model else budget
         self.plan_status = PLAN_OK if self._temps else PLAN_NO_TEMPERATURES
 
     async def _async_refresh_temperatures(self, now: datetime) -> None:

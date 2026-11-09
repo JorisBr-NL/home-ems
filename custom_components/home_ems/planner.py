@@ -114,6 +114,9 @@ class Plan:
     state_kwh: float = 0.0       # part of the heat need from the room being below target
     gas_cost_per_kwh_heat: float | None = None
     gas_cheaper_quarters: int = 0  # quarters where the boiler gives cheaper heat (valued at gas)
+    # v0.11: made with the house model; the predicted living room temperature per quarter
+    model: bool = False
+    predicted: tuple[tuple[datetime, float], ...] = field(default_factory=tuple)
 
     @property
     def run_hours(self) -> float:

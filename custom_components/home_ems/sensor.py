@@ -66,6 +66,21 @@ def _plan_attrs(c: HomeEmsCoordinator) -> dict[str, Any]:
         "gas_cheaper_quarters": p.gas_cheaper_quarters,
         "made": _local(p.made),
         "runs": [r.to_dict() | {"start": _local(r.start), "end": _local(r.end)} for r in p.runs],
+        "model": p.model,
+        **_model_attrs(c),
+    }
+
+
+def _model_attrs(c: HomeEmsCoordinator) -> dict[str, Any]:
+    """The plan of the house model (v0.11), also while it only shows: its runs and the
+    predicted living room temperature per hour."""
+    m = c.model_plan
+    if m is None:
+        return {"model_runs": [], "predicted": []}
+    return {
+        "model_runs": [{"start": _local(r.start), "end": _local(r.end), "reason": r.reason,
+                        "heat_kwh": round(r.heat_kwh, 2), "cost": round(r.cost, 3)} for r in m.runs],
+        "predicted": [{"start": _local(t), "temp": v} for t, v in m.predicted if t.minute == 0],
     }
 
 

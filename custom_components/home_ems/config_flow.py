@@ -60,6 +60,7 @@ from .const import (
     OPT_PV_RUN_THRESHOLD,
     OPT_HEAT_RATE,
     OPT_HEAT_RATE_SLOPE,
+    OPT_PLANNER_MODEL,
     OPT_LIVING_MIN,
     OPT_NIGHT_CEILING,
     OPT_OFF_MARGIN,
@@ -327,6 +328,8 @@ class HomeEmsOptionsFlow(OptionsFlow):
                 number(OPT_HEAT_RATE_SLOPE, 0, 2, 0.05, "kW/°C"),
                 number(OPT_CAPACITY, 0, 100, 0.5, "kWh/K"),
                 number(OPT_BASE_LOAD, 0, 3, 0.05, "kW"),
+                (vol.Required(OPT_PLANNER_MODEL, default=bool(current[OPT_PLANNER_MODEL])),
+                 selector.BooleanSelector()),
             ]),
             "sources": (True, [
                 entity(OPT_PRICE_ENTITY),
