@@ -75,7 +75,9 @@ def test_off_level_is_below_the_living_room_minimum():
 
 
 def test_target_stays_below_the_comfort_maximum():
-    assert target(ev(Advice.RUN, "pv"), living=21.6).setpoint == 21.5
+    t = arbiter.target_setpoint(ev(Advice.RUN, "pv"), 21.2, False, pv_extra=0.5)
+    assert t.setpoint == 21.5                                # capped at the comfort maximum
+    assert target(ev(Advice.RUN, "pv"), living=21.6).source == "idle"   # no room to climb
     assert target(ev(Advice.RUN, "comfort_min"), living=16.0).setpoint == 16.2
 
 
