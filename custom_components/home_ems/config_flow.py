@@ -8,6 +8,7 @@ import yaml
 
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers import selector
 
 from .const import (
@@ -177,6 +178,17 @@ def _meter(multiple: bool = False) -> selector.EntitySelector:
     return selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor", multiple=multiple))
 
 
+def _flatten(user_input: dict[str, Any]) -> dict[str, Any]:
+    """Form sections arrive as nested dicts; the options stay flat."""
+    out: dict[str, Any] = {}
+    for key, value in user_input.items():
+        if isinstance(value, dict):
+            out.update(value)
+        else:
+            out[key] = value
+    return out
+
+
 class HomeEmsOptionsFlow(OptionsFlow):
     """Five screens: the planner and advice, control (the executor), the bedrooms, PV
     curtailment and appliances, and the energy and cost overview."""
@@ -266,40 +278,65 @@ class HomeEmsOptionsFlow(OptionsFlow):
 
     async def async_step_planner(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
-            return self._save(PLANNER_OPTIONS, user_input)
+            return self._save(PLANNER_OPTIONS, _flatten(user_input))
         current = {**OPTION_DEFAULTS, **self.config_entry.options}
 
-        def entity(key: str) -> vol.Optional:
-            return _optional(current, key)
+        def number(key: str, min_: float, max_: float, step: float, unit: str) -> tuple:
+            return vol.Required(key, default=current[key]), _number(min_, max_, step, unit)
 
+        def entity(key: str, domain: str = "sensor") -> tuple:
+            return (_optional(current, key),
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain=domain)))
+
+        def time(key: str) -> tuple:
+            return vol.Required(key, default=current[key]), selector.TimeSelector()
+
+        groups: dict[str, tuple[bool, list[tuple]]] = {
+            "temperatures": (False, [
+                number(OPT_COMFORT_SETPOINT, 15, 23, 0.1, "°C"),
+                number(OPT_RUN_HEADROOM, 0, 3, 0.1, "K"),
+                number(OPT_COMFORT_MAX, 19, 24, 0.1, "°C"),
+                number(OPT_COMFORT_MIN, 15, 21, 0.1, "°C"),
+                number(OPT_OFF_MARGIN, 0.2, 3, 0.1, "K"),
+            ]),
+            "night": (False, [
+                number(OPT_LIVING_MIN, 15, 21, 0.1, "°C"),
+                number(OPT_NIGHT_CEILING, 0, 23, 0.1, "°C"),
+                time(OPT_NIGHT_START),
+                time(OPT_NIGHT_END),
+            ]),
+            "runs": (True, [
+                number(OPT_MIN_RUN, 0, 180, 5, "min"),
+                number(OPT_START_BAND, 0, 1.5, 0.1, "K"),
+                number(OPT_MIN_PAUSE, 0, 8, 0.25, "h"),
+                number(OPT_MAX_GAP, 2, 24, 0.5, "h"),
+            ]),
+            "solar_price": (True, [
+                number(OPT_PV_RUN_THRESHOLD, 0, 5000, 50, "W"),
+                number(OPT_BOOST_MARGIN, 0, 2000, 10, "W"),
+                number(OPT_GAP_MAX, 0.1, 2, 0.1, "K"),
+                number(OPT_LOW_PRICE, 0, 1, 0.01, "EUR/kWh"),
+                number(OPT_EXPENSIVE_SHARE, 0, 60, 5, "%"),
+            ]),
+            "floor": (True, [
+                number(OPT_FLOOR_RULE_BAND, 0, 3, 0.1, "K"),
+                number(OPT_FLOOR_MIN_MARGIN, -3, 5, 0.1, "K"),
+            ]),
+            "house_model": (True, [
+                number(OPT_HEAT_RATE, 0.5, 20, 0.1, "kW"),
+                number(OPT_HEAT_RATE_SLOPE, 0, 2, 0.05, "kW/°C"),
+                number(OPT_CAPACITY, 0, 100, 0.5, "kWh/K"),
+                number(OPT_BASE_LOAD, 0, 3, 0.05, "kW"),
+            ]),
+            "sources": (True, [
+                entity(OPT_PRICE_ENTITY),
+                entity(OPT_SOLAR_ENTITY),
+                entity(OPT_WEATHER_ENTITY, "weather"),
+                entity(OPT_GAS_ENTITY),
+            ]),
+        }
         schema = vol.Schema({
-            entity(OPT_PRICE_ENTITY): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
-            entity(OPT_SOLAR_ENTITY): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
-            entity(OPT_WEATHER_ENTITY): selector.EntitySelector(selector.EntitySelectorConfig(domain="weather")),
-            entity(OPT_GAS_ENTITY): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
-            vol.Required(OPT_COMFORT_SETPOINT, default=current[OPT_COMFORT_SETPOINT]): _number(15, 23, 0.1, "°C"),
-            vol.Required(OPT_FLOOR_RULE_BAND, default=current[OPT_FLOOR_RULE_BAND]): _number(0, 3, 0.1, "K"),
-            vol.Required(OPT_FLOOR_MIN_MARGIN, default=current[OPT_FLOOR_MIN_MARGIN]): _number(-3, 5, 0.1, "K"),
-            vol.Required(OPT_PV_RUN_THRESHOLD, default=current[OPT_PV_RUN_THRESHOLD]): _number(0, 5000, 50, "W"),
-            vol.Required(OPT_MIN_RUN, default=current[OPT_MIN_RUN]): _number(0, 180, 5, "min"),
-            vol.Required(OPT_EXPENSIVE_SHARE, default=current[OPT_EXPENSIVE_SHARE]): _number(0, 60, 5, "%"),
-            vol.Required(OPT_MAX_GAP, default=current[OPT_MAX_GAP]): _number(2, 24, 0.5, "h"),
-            vol.Required(OPT_BASE_LOAD, default=current[OPT_BASE_LOAD]): _number(0, 3, 0.05, "kW"),
-            vol.Required(OPT_COMFORT_MIN, default=current[OPT_COMFORT_MIN]): _number(15, 21, 0.1, "°C"),
-            vol.Required(OPT_COMFORT_MAX, default=current[OPT_COMFORT_MAX]): _number(19, 24, 0.1, "°C"),
-            vol.Required(OPT_CAPACITY, default=current[OPT_CAPACITY]): _number(0, 100, 0.5, "kWh/K"),
-            vol.Required(OPT_MIN_PAUSE, default=current[OPT_MIN_PAUSE]): _number(0, 8, 0.25, "h"),
-            vol.Required(OPT_LIVING_MIN, default=current[OPT_LIVING_MIN]): _number(15, 21, 0.1, "°C"),
-            vol.Required(OPT_OFF_MARGIN, default=current[OPT_OFF_MARGIN]): _number(0.2, 3, 0.1, "K"),
-            vol.Required(OPT_RUN_HEADROOM, default=current[OPT_RUN_HEADROOM]): _number(0, 3, 0.1, "K"),
-            vol.Required(OPT_START_BAND, default=current[OPT_START_BAND]): _number(0, 1.5, 0.1, "K"),
-            vol.Required(OPT_HEAT_RATE, default=current[OPT_HEAT_RATE]): _number(0.5, 20, 0.1, "kW"),
-            vol.Required(OPT_HEAT_RATE_SLOPE, default=current[OPT_HEAT_RATE_SLOPE]): _number(0, 2, 0.05, "kW/°C"),
-            vol.Required(OPT_NIGHT_CEILING, default=current[OPT_NIGHT_CEILING]): _number(0, 23, 0.1, "°C"),
-            vol.Required(OPT_NIGHT_START, default=current[OPT_NIGHT_START]): selector.TimeSelector(),
-            vol.Required(OPT_NIGHT_END, default=current[OPT_NIGHT_END]): selector.TimeSelector(),
-            vol.Required(OPT_GAP_MAX, default=current[OPT_GAP_MAX]): _number(0.1, 2, 0.1, "K"),
-            vol.Required(OPT_BOOST_MARGIN, default=current[OPT_BOOST_MARGIN]): _number(0, 2000, 10, "W"),
-            vol.Required(OPT_LOW_PRICE, default=current[OPT_LOW_PRICE]): _number(0, 1, 0.01, "EUR/kWh"),
+            vol.Required(name): section(vol.Schema(dict(fields)), {"collapsed": collapsed})
+            for name, (collapsed, fields) in groups.items()
         })
         return self.async_show_form(step_id="planner", data_schema=schema)

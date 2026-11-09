@@ -184,36 +184,120 @@
       },
       "planner": {
         "title": "Planner en advies",
-        "description": "Databronnen voor de dagplanner en de drempels van het advies. Home EMS draait nog steeds in observatiemodus en verandert niets.",
-        "data": {
-          "price_entity": "Stroomprijssensor (Jeroen.nl, attribuut prices)",
-          "solar_entity": "Opwekvoorspelling (Jeroen.nl, vandaag, attribuut hours)",
-          "weather_entity": "Weerentiteit (temperatuurverwachting per uur)",
-          "comfort_setpoint": "Comfortsetpoint woonkamer",
-          "floor_rule_band": "Vloerregel alleen onder comfortsetpoint +",
-          "floor_min_margin": "Minimale vloermarge (flowmeter − woonkamer)",
-          "pv_run_threshold_w": "PV-overschot voor een run",
-          "min_run_minutes": "Minimale runtijd",
-          "expensive_share_pct": "Prijspiek: duurste deel van de dag",
-          "max_gap_hours": "Langste tijd zonder run (planner)",
-          "base_load_kw": "Basisverbruik huis naast de warmtepomp (planner)",
-          "comfort_min": "Comfortminimum (woonkamer en keuken)",
-          "comfort_max": "Comfortmaximum (bovenkant van een run bij zon of lage prijs)",
-          "living_min": "Minimum woonkamer 's nachts (overdag is het comfortsetpoint het minimum)",
-          "off_margin_k": "Uit-niveau onder het minimum woonkamer (tado alleen als vangnet)",
-          "capacity_kwh_k": "Warmtecapaciteit van het huis (planner)",
-          "heat_rate_kw": "Warmte per run-uur bij 0 °C buiten (planner)",
-          "heat_rate_slope": "Warmte per run-uur: minder per °C warmer buiten (planner)",
-          "gas_price_entity": "Gasprijssensor (Jeroen.nl, all-in per m³)",
-          "min_pause_hours": "Kortste pauze tussen geplande runs (kortere pauzes worden opgevuld)",
-          "run_headroom_k": "Plafond van een run boven het comfortsetpoint overdag (bovenkant van een run; bij zon tot het comfortmaximum)",
-          "start_band_k": "Geplande run: alleen starten als de kamer zoveel onder het plafond zit (ruimte om te klimmen, lange runs)",
-          "night_ceiling": "Nacht: plafond van een run (°C, nooit onder het comfortminimum), 0 = uit",
-          "night_start": "Nacht vanaf",
-          "night_end": "Nacht tot",
-          "gap_max_k": "Grootste gat setpoint − kamer (zon of lage prijs)",
-          "low_price_eur": "Lage prijs (all-in) voor het grootste gat, 0 = uit",
-          "boost_margin_w": "Zonneboost: gat een stap omhoog of omlaag boven deze teruglevering of afname (gemiddelde over 5 minuten), 0 = uit"
+        "description": "Home EMS bepaalt wanneer de warmtepomp draait en schrijft het setpoint van de woonkamer (als de schakelaar Sturing aan staat). Tussen runs staat het setpoint op het minimum min de uit-marge, zodat tado niets zelf doet; een run start net boven de kamer en stopt bovenaan. Klap een sectie open om iets te wijzigen.",
+        "sections": {
+          "temperatures": {
+            "name": "Temperaturen overdag",
+            "description": "Onder- en bovengrens van de woonkamer overdag.",
+            "data": {
+              "comfort_setpoint": "Comfortsetpoint woonkamer",
+              "run_headroom_k": "Plafond boven het comfortsetpoint",
+              "comfort_max": "Comfortmaximum",
+              "comfort_min": "Comfortminimum (woonkamer en keuken)",
+              "off_margin_k": "Uit-marge onder het minimum"
+            },
+            "data_description": {
+              "comfort_setpoint": "Ondergrens overdag: bij deze temperatuur (+0,1) start Home EMS zelf een run. Ook het doel van de planner.",
+              "run_headroom_k": "Bovenkant van een run overdag = comfortsetpoint + dit. Op de bovenkant stopt de run meteen. 0,5 geeft lange runs (bijv. 19,0 tot 19,5).",
+              "comfort_max": "Bovenkant van een run bij zonne-overschot of een lage prijs: warmte opslaan in het huis. Ook het hoogste setpoint dat Home EMS ooit schrijft.",
+              "comfort_min": "Veiligheidsgrens: komt de woonkamer of de keuken hieronder, dan start er altijd een run, ook 's nachts en in een prijspiek.",
+              "off_margin_k": "Setpoint tussen runs = minimum − dit (overdag het comfortsetpoint, 's nachts het nachtminimum). tado stookt dan alleen zelf als vangnet als Home EMS of Home Assistant uitvalt."
+            }
+          },
+          "night": {
+            "name": "Nacht",
+            "description": "Binnen het nachtvenster mag het huis afkoelen.",
+            "data": {
+              "living_min": "Minimum woonkamer 's nachts",
+              "night_ceiling": "Nachtplafond",
+              "night_start": "Nacht vanaf",
+              "night_end": "Nacht tot"
+            },
+            "data_description": {
+              "living_min": "Ondergrens 's nachts: bij deze temperatuur (+0,1) start Home EMS een run.",
+              "night_ceiling": "Bovenkant van een run 's nachts (nooit onder het comfortminimum; een run klimt altijd minstens de startband). 0 = nachtminimum + startband.",
+              "night_start": "Begin van het nachtvenster.",
+              "night_end": "Einde van het nachtvenster: vanaf hier gelden de dagwaarden. Zet het zo'n uur voor het opstaan, dan is het huis op tijd warm."
+            }
+          },
+          "runs": {
+            "name": "Runs",
+            "description": "Hoe lang runs en pauzes zijn.",
+            "data": {
+              "min_run_minutes": "Minimale runtijd",
+              "start_band_k": "Startband",
+              "min_pause_hours": "Kortste pauze tussen geplande runs",
+              "max_gap_hours": "Langste tijd zonder run"
+            },
+            "data_description": {
+              "min_run_minutes": "Een gestarte run loopt minstens zo lang, ook voorbij de bovenkant. 30 tot 90 minuten voorkomt pendelen.",
+              "start_band_k": "Een geplande run start alleen als de kamer minstens zoveel onder de bovenkant zit, zodat hij ruimte heeft om te klimmen en lang duurt.",
+              "min_pause_hours": "Planner: kortere pauzes worden opgevuld, zodat geplande runs samen één lange run worden.",
+              "max_gap_hours": "Planner: vangnet dat een run plant als er zo lang geen run was."
+            }
+          },
+          "solar_price": {
+            "name": "Zon en prijs",
+            "description": "Zonne-overschot en goedkope uren benutten.",
+            "data": {
+              "pv_run_threshold_w": "Zonne-overschot voor een run",
+              "boost_margin_w": "Zonneboost: marge",
+              "gap_max_k": "Grootste gat setpoint − kamer",
+              "low_price_eur": "Lage prijs",
+              "expensive_share_pct": "Prijspiek"
+            },
+            "data_description": {
+              "pv_run_threshold_w": "Een run start op zon als het gemiddelde overschot over 5 minuten minstens dit is en de verwachting voor het komende uur nog overschot geeft.",
+              "boost_margin_w": "Tijdens een run gaat het gat 0,1 omhoog per 5 minuten zolang de gemiddelde teruglevering hierboven zit, en halveert het als de gemiddelde afname hierboven zit. 0 = uit.",
+              "gap_max_k": "Grootste gat bij zon of een lage prijs. Een groter gat laat de warmtepomp harder draaien.",
+              "low_price_eur": "Bij deze all-in prijs per kWh of lager is het gat het grootst en is de bovenkant het comfortmaximum. 0 = uit.",
+              "expensive_share_pct": "Het duurste deel van de kwartieren van de dag telt als prijspiek: daar start het advies geen run (de minimums wel), en een run loopt niet door tot de bovenkant."
+            }
+          },
+          "floor": {
+            "name": "Vloer",
+            "description": "Regel voor het vloerwater (flowmeter).",
+            "data": {
+              "floor_rule_band": "Vloerregel alleen onder comfortsetpoint +",
+              "floor_min_margin": "Minimale vloermarge"
+            },
+            "data_description": {
+              "floor_rule_band": "De vloerregel start alleen een run als de woonkamer onder het comfortsetpoint plus dit zit.",
+              "floor_min_margin": "Vloerwater min woonkamer onder deze waarde: run (als de vloerpomp rondpompt)."
+            }
+          },
+          "house_model": {
+            "name": "Huis en warmtepomp (planner)",
+            "description": "Hiermee schat de planner hoeveel run-uren nodig zijn.",
+            "data": {
+              "heat_rate_kw": "Warmte per run-uur bij 0 °C buiten",
+              "heat_rate_slope": "Warmte per run-uur: minder per °C warmer",
+              "capacity_kwh_k": "Warmtecapaciteit van het huis",
+              "base_load_kw": "Basisverbruik van het huis"
+            },
+            "data_description": {
+              "heat_rate_kw": "Warmte die de warmtepomp levert als hij draait, bij 0 °C buiten (gemeten Quatt Duo: ongeveer 7,0 kW).",
+              "heat_rate_slope": "Hoeveel minder warmte per graad warmer buiten (gemeten: ongeveer 0,4 kW per °C). 0 = bij elke temperatuur gelijk.",
+              "capacity_kwh_k": "Opgeslagen warmte per graad kamertemperatuur. Een kamer boven het doel verlaagt de behoefte, eronder verhoogt hem.",
+              "base_load_kw": "Verbruik van het huis naast de warmtepomp, voor de zonverwachting."
+            }
+          },
+          "sources": {
+            "name": "Bronnen",
+            "description": "Sensoren voor prijzen, zon en weer.",
+            "data": {
+              "price_entity": "Stroomprijssensor",
+              "solar_entity": "Opwekvoorspelling",
+              "weather_entity": "Weerentiteit",
+              "gas_price_entity": "Gasprijssensor"
+            },
+            "data_description": {
+              "price_entity": "Jeroen.nl stroomprijs, attribuut prices.",
+              "solar_entity": "Jeroen.nl opwekvoorspelling van vandaag, attribuut hours.",
+              "weather_entity": "Temperatuurverwachting per uur.",
+              "gas_price_entity": "Jeroen.nl gasprijs, all-in per m³ (hybride: de ketel waar die goedkoper is)."
+            }
+          }
         }
       },
       "control": {
