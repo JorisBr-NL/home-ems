@@ -193,7 +193,7 @@ async def test_reconfigure_changes_the_thermostat_and_keeps_the_options(recorder
 
 
 async def test_solar_boost_survives_a_reload(recorder_mock, hass, entry):
-    set_house(hass)
+    set_house(hass, hp_w=900.0, grid_w=-1500.0)   # running on solar, still exporting
     await _setup(hass, entry)
     coordinator = entry.runtime_data
     coordinator.pv_boost.extra = 0.3
