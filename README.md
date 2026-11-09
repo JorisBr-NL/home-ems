@@ -4,11 +4,11 @@
 
 Eigen energiemanagementsysteem voor Home Assistant: stuurt (straks) de Quatt-warmtepomp via tado, de Quatt Chill, witgoed via slimme stekkers, de Alfen-laadpaal en later een thuisbatterij, op basis van zonne-opwek en dynamische prijzen.
 
-Het ontwerp staat in Obsidian (`Projects/Energie/EMS ontwerp.md`); de analyse waarop de standaardwaarden zijn gebaseerd in `Projects/Energie/Analyse runs en flowmeter.md`.
+Het ontwerp staat in Obsidian (`Projects/Energie/EMS ontwerp.md`, alleen de actuele stand); de versiegeschiedenis en de eerste analyses staan daar in de map `Archief`.
 
-## Status: versie 0.10.0 – observatie- en schaduwmodus, sturing optioneel
+## Status: versie 0.10.7 – Home EMS stuurt de woonkamer
 
-Home EMS leest sensoren uit en laat zien wat het **zou** doen, sinds v0.5 ook welk setpoint het in de woonkamer zou zetten. Sinds v0.6 kan het dat setpoint ook echt schrijven, maar alleen als je de schakelaar *Sturing* aanzet (standaard uit). Zolang die uit staat, schrijft Home EMS niets en blijven je bestaande automatiseringen leidend.
+Home EMS bepaalt wanneer de warmtepomp draait en schrijft het setpoint van de woonkamer, zodra je de schakelaar *Sturing* aanzet (standaard uit). Zolang die uit staat, schrijft Home EMS niets en laat het alleen zien wat het **zou** doen. Slaapkamers, PV-aftoppen en witgoed staan nog in schaduwmodus: ze worden berekend, maar niet geschakeld.
 
 | Entiteit | Betekenis |
 |---|---|
@@ -21,25 +21,42 @@ Home EMS leest sensoren uit en laat zien wat het **zou** doen, sinds v0.5 ook we
 
 Advieslogica: buiten een prijspiek een run als de vloermarge onder 0 K komt (het vloerwater kouder dan de woonkamer; sinds v0.4.4, daarvoor 0,5 K) **en de woonkamer onder 19,5 °C is** (comfortsetpoint 19,0 °C + 0,5 °C, sinds v0.2.1), of bij ≥ 700 W PV-overschot zolang de vloermarge onder 3 K ligt; een lopende run korter dan 30 min hoort door te lopen. In een prijspiek (de duurste kwartieren van de dag volgens de prijssensor, instelbaar onder *Configureren*) adviseert Home EMS geen start, behalve als de vloermarge meer dan 1 K onder de grens zakt. Zonder prijsdata is er geen piek. Zakt de woonkamer of de keuken onder het comfortminimum (standaard 18 °C), dan is er altijd een run nodig, ook in een prijspiek (sinds v0.5; de keuken is daarbij alleen een meetpunt). Is er een debietsensor gekozen, dan telt de vloermarge alleen als de vloerpomp rondpompt (≥ 100 L/u); stilstaand water zegt niets over de vloer. Een run start je het zuinigst met een setpoint net boven de woonkamer (`setpoint_hint`): tado laat de warmtepomp dan op laag toerental draaien, met een hogere COP dan bij een grote stap. Bij een eerder opgeslagen instelling blijft de oude minimale vloermarge staan; pas die aan onder *Configureren → Planner en advies*.
 
-### Gewenst setpoint (v0.5, schaduwmodus)
+### Gewenst setpoint en het schakelpunt (sinds v0.10.5)
 
-Advies, anti-pendelen en de dagplanner willen allemaal iets van dezelfde thermostaat. De arbiter maakt daar één gewenst setpoint per moment van, in deze volgorde:
+Home EMS bepaalt het schakelpunt; de thermostaat en de warmtepomp voeren alleen uit. Er zijn twee toestanden en niets ertussenin:
 
-1. **EMS uit** (`switch.home_ems_ems_enabled`): geen setpoint, het schema van de thermostaat is leidend. De stand blijft bewaard over een herstart.
-2. **Comfortminimum**, daarna de **vloerregel**: run starten met de woonkamer + 0,2 °C.
-3. **Minimale looptijd**: een run korter dan de minimale runtijd vasthouden met de woonkamer + 0,1 °C.
-4. **Slaapkamer** (sinds v0.7): een slaapkamer is vlak voor bedtijd nog te koud, dus een korte run starten of vasthouden (zie hieronder).
-5. **Planner**: een geplande run starten (+ 0,2 °C) of vasthouden (+ 0,1 °C).
-6. **PV-overschot**: een run starten, of een lopende run vasthouden zolang het huis nog teruglevert.
-7. **Rust**: het comfortminimum, zodat de thermostaat zelf alleen nog als vangnet warmte vraagt.
+- **Uit:** het setpoint staat op het minimum min de *uit-marge* (standaard 0,5 °C). De thermostaat vraagt dan geen warmte; alleen als Home EMS of Home Assistant uitvalt, is hij het vangnet.
+- **Aan:** Home EMS start een run met de woonkamer + 0,2 °C. Daarna beweegt het setpoint **alleen omhoog** mee met de kamer (+ 0,1 °C). Zakt de kamer in het begin van een run nog even (het water en de vloer warmen eerst op), dan blijft het setpoint staan.
+- **Stop:** komt de kamer op de bovengrens, dan gaat het setpoint in één keer naar het uit-niveau. Een setpoint gelijk aan de kamer blijft nooit staan, want dan bepalen de thermostaat en de warmtepomp zelf wanneer ze aan en uit gaan.
 
-Het setpoint blijft altijd tussen het comfortminimum en -maximum (standaard 18 en 21,5 °C). Een run die niet op zon draait, blijft bovendien onder een plafond: comfortsetpoint + 1 °C (instelbaar, sinds v0.9). Zo blijft een lange run een rustige run op laag vermogen en loopt de woonkamer niet op naar het comfortmaximum; alleen bij zonne-overschot mag de warmte hoger in het huis.
+**Grenzen per dagdeel**
 
-**Variabel gat** (sinds v0.10): het gat tussen setpoint en kamer bepaalt hoe hard de warmtepomp draait. Normaal is het klein (+0,2 °C bij starten, +0,1 °C bij vasthouden): zacht draaien, hoge COP. Bij zonne-overschot groeit het naar verhouding mee (vol bij het ingestelde overschot, standaard 1.500 W) tot het grootste gat (standaard +0,6 °C); onder een lage prijs (all-in, standaard € 0,20/kWh, 0 = uit) meteen het grootste gat. Dan draait de warmtepomp harder en slaat hij de goedkope stroom op als warmte in het huis, tot het comfortmaximum. Omdat de warmtepomp dan meer verbruikt, daalt de teruglevering en wordt het gat vanzelf weer kleiner. Het attribuut `boost` (`solar surplus` / `low price`) en `boost_factor` op *Gewenst setpoint* laten zien wanneer dat gebeurt. Een lage prijs start zelf geen run; dat doet de planner.
+| | Ondergrens (Home EMS start zelf een run, + 0,1 °C) | Bovengrens (de run stopt) |
+|---|---|---|
+| Overdag | comfortsetpoint | comfortsetpoint + *plafond* (standaard 0,5 °C) |
+| Bij zonne-overschot of een lage prijs | comfortsetpoint | comfortmaximum |
+| In het nachtvenster | *minimum woonkamer 's nachts* | nachtplafond (0 = minimum + startband) |
+| Altijd | comfortminimum in de woonkamer of de keuken: altijd een run, ook in een prijspiek | – |
+
+**Volgorde** (de eerste die geldt, bepaalt het setpoint):
+
+1. **EMS uit** (`switch.home_ems_ems_enabled`): geen setpoint, het schema van de thermostaat is leidend.
+2. **Comfortminimum** (woonkamer of keuken), daarna de **vloerregel**: run starten.
+3. **Minimale runtijd** (standaard 30 min, instelbaar): een gestarte run loopt minstens zo lang, ook voorbij de bovengrens.
+4. **Slaapkamer** vlak voor bedtijd nog te koud: een korte run (zie *Slaapkamers*).
+5. **Minimum woonkamer** (bron `minimum`): de kamer staat op de ondergrens van het dagdeel.
+6. **Zon** (bron `pv`): een run start als het overschot **gemiddeld over 5 minuten** boven de drempel zit, de zonverwachting voor het komende uur nog overschot geeft, en de kamer minstens de startband onder het comfortmaximum zit. Een lopende run blijft doorlopen zolang er teruggeleverd wordt, tot het comfortmaximum.
+7. **Planner**: een geplande run start alleen als de kamer minstens de **startband** (standaard 0,3 °C) onder de bovengrens zit, zodat hij ruimte heeft om te klimmen en lang duurt.
+8. **Doorlopen tot de bovengrens** (bron `to_top`): een run stopt niet als zijn geplande blok voorbij is, maar pas bovenaan; behalve in een prijspiek.
+9. **Uit** (bron `idle`).
+
+**Zonneboost.** Tijdens een run met teruglevering gaat het gat tussen setpoint en kamer (waarop de thermostaat moduleert) om de 5 minuten 0,1 °C omhoog zolang er gemiddeld meer dan de *marge* (standaard 300 W) teruggaat, tot het *grootste gat*. Komt er gemiddeld meer dan de marge van het net, dan halveert de verhoging, en die gaat ook weer van het setpoint af. Het overschot is de teruglevering plus wat de draaiende warmtepomp en de batterijen (optioneel, onder *Opnieuw configureren*) gebruiken, nooit meer dan de PV-productie. De boost blijft bewaard bij het opslaan van de opties en bij een korte herstart.
+
+**Lage prijs.** Op of onder de lage prijs (all-in, standaard € 0,20/kWh, 0 = uit) is het gat meteen het grootste gat en is de bovengrens het comfortmaximum (niet in het nachtvenster).
 
 | Entiteit | Betekenis |
 |---|---|
-| `sensor.home_ems_target_setpoint` | het setpoint dat Home EMS zou zetten; attributen `source` (`off`, `unknown`, `comfort_min`, `floor`, `keep_running`, `bedroom`, `planner`, `pv`, `idle`), `reason`, `current_setpoint` (het setpoint van nu) en `would_write` (het EMS zou de thermostaat nu aanpassen) |
+| `sensor.home_ems_target_setpoint` | het setpoint dat Home EMS zet of zou zetten; attributen `source` (`off`, `unknown`, `comfort_min`, `floor`, `keep_running`, `bedroom`, `minimum`, `pv`, `planner`, `to_top`, `idle`), `reason`, `current_setpoint`, `would_write`, `boost` (`solar surplus` / `low price`), `boost_k` (hoeveel het gat verhoogd is), `ceiling` (bovengrens nu), `night` en `mode` (`control` met de sturing aan, anders `shadow`) |
 | `switch.home_ems_ems_enabled` | EMS aan of uit |
 | `sensor.home_ems_negative_price_export_today` | teruglevering vandaag terwijl de marktprijs negatief was (kWh); bij een dynamisch contract kost dat geld |
 
@@ -126,9 +143,10 @@ De tellers en een lopende run blijven bewaard over een herstart van HA (binnen d
 
 ### Dagplanner (v0.3)
 
-De planner rekent uit hoeveel warmte het huis tot het einde van de prijsdata (max. 36 uur) nodig heeft, en zet die run-uren in de goedkoopste kwartieren. Ook dit is alleen advies: er wordt niets geschakeld.
+De planner rekent uit hoeveel warmte het huis tot het einde van de prijsdata (max. 36 uur) nodig heeft, en zet die run-uren in de goedkoopste kwartieren. De arbiter (hierboven) beslist of een geplande run echt start. Nog niet in de planner: de grenzen per dagdeel en vooruit starten.
 
-- **Warmtevraag:** graaduren uit de temperatuurverwachting × 0,217 kWh, min 5,3 kWh per dag (model uit de data van 14–23 okt 2026). Eén run-uur levert ~2,9 kW warmte.
+- **Warmtevraag:** graaduren uit de temperatuurverwachting × 0,217 kWh, min 5,3 kWh per dag (model uit de data van 14–23 okt 2026).
+- **Warmte per run-uur** (sinds v0.10.5): *warmte bij 0 °C buiten* min *minder per °C warmer* × de buitentemperatuur (standaard 2,9 kW en 0, dus overal gelijk). Een warmtepomp die meer levert, krijgt minder en langere runs.
 - **Kosten per kWh warmte** per kwartier: de stroomprijs (of, bij PV-overschot boven het basisverbruik, de gemiste terugleververgoeding = marktprijs), gedeeld door de COP bij de buitentemperatuur (COP ≈ 3,5 + 0,15 × T, tussen 2,5 en 7).
 - **Gas** (sinds v0.8, optioneel): met een gasprijssensor (all-in per m³, bijvoorbeeld de gasprijs van Jeroen.nl) vergelijkt de planner per kwartier de kosten van warmte uit de warmtepomp (prijs ÷ COP) met die uit de ketel (gasprijs ÷ (9,77 kWh/m³ × 90%)). Waar de ketel goedkoper is (vorst, prijspiek), rekent de planner dat kwartier tegen de gaskosten, zonder stroom: de warmtepomp kiest zelf tussen compressor en ketel, maar alleen als de thermostaat warmte vraagt. Home EMS blijft daar dus gewoon warmte vragen als dat nodig is (sinds v0.8.1; in v0.8.0 werden zulke kwartieren overgeslagen). Attributen `gas_cost_per_kwh_heat` en `gas_cheaper_quarters` op *Volgende geplande run*.
 - **Stand van het huis** (sinds v0.5): staat de woonkamer onder het comfortsetpoint, dan komt er warmte bij (warmtecapaciteit × verschil, standaard 15 kWh/K, maximaal 2 K); staat hij erboven, dan gebruikt de planner eerst die opgeslagen warmte. Alleen in het stookseizoen. Het attribuut `state_kwh` toont dat deel.
@@ -342,9 +360,9 @@ cards:
           legend_value: false
 ```
 
-### Instellingen (v0.3, v0.4)
+### Instellingen
 
-Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kies je *Planner en advies*, *Sturing*, *Slaapkamers*, *Aftoppen en witgoed* of *Energie- en kostenoverzicht*. Onder het eerste: de databronnen hierboven, comfortsetpoint, de band voor de vloerregel, minimale vloermarge, PV-overschot voor een run, minimale runtijd, het deel van de dag dat als prijspiek telt (standaard 25%), de langste tijd zonder run, het basisverbruik van het huis, het comfortminimum en -maximum, de warmtecapaciteit van het huis, de kortste pauze tussen runs, het plafond van een run boven het comfortsetpoint, en het grootste gat met het overschot en de lage prijs waarbij dat geldt. Wijzigingen gelden direct.
+Via **Instellingen → Apparaten en diensten → Home EMS → Configureren** kies je *Planner en advies*, *Sturing*, *Slaapkamers*, *Aftoppen en witgoed* of *Energie- en kostenoverzicht*. *Planner en advies* is verdeeld in secties met onder elk veld een korte uitleg: *Temperaturen overdag*, *Nacht*, *Runs*, *Zon en prijs*, *Vloer*, *Huis en warmtepomp (planner)* en *Bronnen*. Opslaan laadt Home EMS opnieuw; de waarden gelden direct. Entiteiten wisselen (bijvoorbeeld een andere thermostaat of de batterijen) gaat via ⋮ → *Opnieuw configureren*, zonder dat de opties verloren gaan.
 
 ### Energie- en kostenoverzicht (v0.4)
 
