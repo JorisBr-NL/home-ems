@@ -161,6 +161,7 @@ STORAGE_VERSION = 1
 # arbiter sources that start or hold a run: warm water flows to the bedrooms
 RUN_SOURCES = ("comfort_min", "floor", "minimum", "keep_running", "planner", "pv", "to_top")
 SAVE_DELAY = 60  # seconds
+BOOST_KEEP = timedelta(minutes=15)  # a boost older than this is not taken back after a restart
 
 type HomeEmsConfigEntry = ConfigEntry[HomeEmsCoordinator]
 
@@ -243,7 +244,31 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         """Restore run state and day counters from the previous run of HA."""
         stored = await self._store.async_load()
         if stored:
-            self.tracker = RunTracker.from_dict(stored, dt_util.now())
+            now = dt_util.now()
+            self.tracker = RunTracker.from_dict(stored, now)
+            self._restore_boost(stored.get("boost"), now)
+
+    def _stored(self) -> dict[str, Any]:
+        """Run state for the store, plus the solar boost and the raise on the thermostat,
+        so saving the options (which reloads the integration) does not lose them."""
+        return {**self.tracker.to_dict(), "boost": {
+            "extra": self.pv_boost.extra, "raised": self._prev_raised,
+            "at": dt_util.now().isoformat()}}
+
+    def _restore_boost(self, data: dict | None, now: datetime) -> None:
+        """Take the boost back after a reload or a short restart (at most BOOST_KEEP old)."""
+        try:
+            at = datetime.fromisoformat(data["at"]) if data else None
+        except (KeyError, TypeError, ValueError):
+            return
+        if at is None or now - at > BOOST_KEEP:
+            return
+        self.pv_boost.extra = float(data.get("extra") or 0.0)
+        self._prev_raised = float(data.get("raised") or 0.0)
+
+    async def async_save_now(self) -> None:
+        """Write the store at once (before an unload or reload)."""
+        await self._store.async_save(self._stored())
 
     def _float_state(self, entity_id: str | None) -> float | None:
         if not entity_id:
@@ -322,7 +347,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         evaluation = confirm_pv_start(
             evaluation, average_surplus(self._surplus_samples, now),
             settings.pv_run_threshold_w, self._pv_forecast_ok(now))
-        self._store.async_delay_save(self.tracker.to_dict, SAVE_DELAY)
+        self._store.async_delay_save(self._stored, SAVE_DELAY)
         if self.plan is None or now - self.plan.made >= REPLAN_INTERVAL:
             await self._async_replan(now)
         if self._overview_made is None or now - self._overview_made >= OVERVIEW_REFRESH:

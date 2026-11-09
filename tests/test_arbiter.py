@@ -75,7 +75,9 @@ def test_off_level_is_below_the_living_room_minimum():
 
 
 def test_target_stays_below_the_comfort_maximum():
-    assert target(ev(Advice.RUN, "pv"), living=21.6).setpoint == 21.5
+    t = arbiter.target_setpoint(ev(Advice.RUN, "pv"), 21.2, False, pv_extra=0.5)
+    assert t.setpoint == 21.5                                # capped at the comfort maximum
+    assert target(ev(Advice.RUN, "pv"), living=21.6).source == "idle"   # no room to climb
     assert target(ev(Advice.RUN, "comfort_min"), living=16.0).setpoint == 16.2
 
 
@@ -287,3 +289,22 @@ def test_pv_boost_keeps_its_step_when_the_grid_reading_drops_out():
     b = arbiter.PvBoost(extra=0.3)
     now = datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc)
     assert b.update(None, True, now, timedelta(minutes=5), s) == 0.3
+
+
+def test_run_on_solar_stops_cleanly_at_the_comfort_maximum():
+    s = arbiter.ArbiterSettings(comfort_max=20.0, living_min=19.0, run_ceiling=19.5)
+    pv = ev(Advice.RUNNING, running=True, surplus=2000.0)
+    t = arbiter.target_setpoint(pv, 19.9, False, settings=s, current_setpoint=20.0, pv_extra=0.4,
+                                prev_raised=0.4)
+    assert (t.setpoint, t.source) == (20.0, "pv")
+    t = arbiter.target_setpoint(pv, 20.0, False, settings=s, current_setpoint=20.0, pv_extra=0.4,
+                                prev_raised=0.4)
+    assert (t.setpoint, t.source) == (18.5, "idle")       # never left at setpoint = room
+
+
+def test_no_solar_start_just_below_the_comfort_maximum():
+    s = arbiter.ArbiterSettings(comfort_max=20.0, living_min=19.0, run_ceiling=19.5, start_band=0.3)
+    start = ev(Advice.RUN, "pv", surplus=2000.0)
+    assert arbiter.target_setpoint(start, 19.7, False, settings=s).source == "pv"
+    t = arbiter.target_setpoint(start, 19.8, False, settings=s)
+    assert (t.setpoint, t.source) == (18.5, "idle")

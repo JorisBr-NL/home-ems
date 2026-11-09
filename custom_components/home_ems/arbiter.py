@@ -236,7 +236,12 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
         return result(start_safe, "bedroom", "bedroom below target before bedtime: short run")
     if not running and living_temp <= s.living_min + s.min_lead + 1e-9:
         return result(start, "minimum", "living room at its minimum: the EMS starts a run")
-    if evaluation.advice == "run" and evaluation.cause == "pv":
+    if running and living_temp >= s.comfort_max and evaluation.advice != "keep_running":
+        # the room reached the comfort maximum (solar or low price): stop cleanly
+        return result(off, "idle", f"room reached the comfort maximum ({s.comfort_max:.1f}): stop the run")
+    if (evaluation.advice == "run" and evaluation.cause == "pv"
+            and living_temp <= s.comfort_max - s.start_band + 1e-9):
+        # a run on solar also needs room to climb: not just below the comfort maximum
         return result(start_pv, "pv", evaluation.reason)
     if running and evaluation.pv_surplus_w:
         # still exporting while the heat pump runs: a long run on solar is the cheapest heat
