@@ -192,6 +192,10 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
         return round(min(value, ceiling, s.comfort_max), 1)
 
     start, hold = on(s.start_offset, top), on(s.hold_offset, top)
+    # starts that protect the house (comfort minimum, floor, bedrooms) always ask for heat,
+    # also when the room is at the top: a setpoint equal to the room would leave the
+    # switch point to tado
+    start_safe, hold_safe = on(s.start_offset, s.comfort_max), on(s.hold_offset, s.comfort_max)
     start_pv, hold_pv = on(s.start_offset, s.comfort_max), on(s.hold_offset, s.comfort_max)
     at_top = living_temp >= top
     room_to_climb = living_temp <= top - s.start_band + 1e-9
@@ -203,20 +207,20 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
         return Target(setpoint, source, reason, why, raised)
 
     if evaluation.advice == "run" and evaluation.cause == "comfort_min":
-        return result(start, "comfort_min", evaluation.reason)
+        return result(start_safe, "comfort_min", evaluation.reason)
     if evaluation.advice == "run" and evaluation.cause == "floor":
-        return result(start, "floor", evaluation.reason)
+        return result(start_safe, "floor", evaluation.reason)
     if not running and living_temp <= s.living_min + s.min_lead + 1e-9:
         return result(start, "minimum", "living room at its minimum: the EMS starts a run")
     if evaluation.advice == "keep_running":
         # also past the top: stopping before the minimum run time is worse
-        return result(on(s.hold_offset, s.comfort_max), "keep_running",
+        return result(hold_safe, "keep_running",
                       "hold the run until the minimum run time")
     if bedroom_call:
         # warm water only reaches the bedrooms while the living room asks for heat
         if running:
-            return result(hold, "bedroom", "bedroom below target before bedtime: keep the run going")
-        return result(start, "bedroom", "bedroom below target before bedtime: short run")
+            return result(hold_safe, "bedroom", "bedroom below target before bedtime: keep the run going")
+        return result(start_safe, "bedroom", "bedroom below target before bedtime: short run")
     if evaluation.advice == "run" and evaluation.cause == "pv":
         return result(start_pv, "pv", evaluation.reason)
     if running and evaluation.pv_surplus_w:

@@ -157,8 +157,9 @@ def test_bedroom_call_starts_or_holds_a_run_after_floor_and_keep_running():
 
 def test_runs_stay_below_the_ceiling_except_on_solar():
     s = arbiter.ArbiterSettings(run_ceiling=20.0)
-    t = arbiter.target_setpoint(ev(Advice.RUN, "floor"), 19.95, False, settings=s)
-    assert t.setpoint == 20.0
+    # a floor run asks for heat also at the ceiling (never setpoint = room)
+    t = arbiter.target_setpoint(ev(Advice.RUN, "floor"), 20.0, False, settings=s)
+    assert t.setpoint == 20.2
     run = ev(Advice.RUNNING, running=True)
     # a setpoint above the ceiling (set by hand earlier) is not kept
     assert arbiter.target_setpoint(run, 19.6, True, settings=s, current_setpoint=20.4).setpoint == 20.0
