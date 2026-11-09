@@ -104,7 +104,18 @@ from .appliances import StartAdvice, best_start, parse_appliances
 from .bedrooms import Bedroom, BedroomSettings, RoomTarget, parse_rooms, room_targets
 from .curtail import CurtailAdvice, CurtailState, advise as curtail_advise
 from .executor import Action, ExecutorSettings, ExecutorState, action_is_retry, step
-from .model import Evaluation, Inputs, RunTracker, Settings, evaluate, prices_today
+from .model import (
+    PV_START_WINDOW,
+    Evaluation,
+    Inputs,
+    RunTracker,
+    Settings,
+    average_surplus,
+    confirm_pv_start,
+    evaluate,
+    prices_today,
+    pv_forecast_ok,
+)
 from .overview import (
     Usage,
     YearSummary,
@@ -115,7 +126,7 @@ from .overview import (
     parse_settings,
     years_csv,
 )
-from .planner import Plan, PlannerSettings, Slot, build_slots, hour_of, plan
+from .planner import QUARTER, Plan, PlannerSettings, Slot, build_slots, hour_of, plan
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -188,6 +199,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self.curtail: CurtailAdvice | None = None
         self.appliance_advice: list[StartAdvice] = []
         self._slots: list[Slot] = []
+        self._surplus_samples: list[tuple[datetime, float]] = []
+        self._prev_raised = 0.0
         self.plan_status = PLAN_NO_PRICES
         self._temps: dict[datetime, float] = {}   # hour start (UTC) -> forecast temperature
         self._temps_fetched: datetime | None = None
@@ -302,6 +315,13 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self.tracker.settings = settings
         inputs = self.read_inputs(now)
         evaluation = evaluate(inputs, self.tracker, now, settings)
+        if evaluation.pv_surplus_w is not None:
+            self._surplus_samples.append((now, evaluation.pv_surplus_w))
+        self._surplus_samples = [(t, v) for t, v in self._surplus_samples
+                                 if now - t <= PV_START_WINDOW]
+        evaluation = confirm_pv_start(
+            evaluation, average_surplus(self._surplus_samples, now),
+            settings.pv_run_threshold_w, self._pv_forecast_ok(now))
         self._store.async_delay_save(self.tracker.to_dict, SAVE_DELAY)
         if self.plan is None or now - self.plan.made >= REPLAN_INTERVAL:
             await self._async_replan(now)
@@ -370,7 +390,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             plan_now = self.plan.run_soon(now, timedelta(hours=float(self.option(OPT_MIN_PAUSE))))
         args = (evaluation, living_temp, plan_now, self.enabled, self.arbiter_settings(now),
                 self.current_setpoint())
-        target = target_setpoint(*args, price_now=self._price_now, pv_extra=self.pv_boost.extra)
+        target = target_setpoint(*args, price_now=self._price_now, pv_extra=self.pv_boost.extra,
+                                 prev_raised=self._prev_raised)
         rooms = self.bedrooms() if self.enabled else []
         if not rooms:
             self.room_targets = []
@@ -380,7 +401,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self.room_targets = room_targets(rooms, temps, now, flowing, self.bedroom_settings())
         if any(r.needs_run for r in self.room_targets):
             target = target_setpoint(*args, bedroom_call=True, price_now=self._price_now,
-                                     pv_extra=self.pv_boost.extra)
+                                     pv_extra=self.pv_boost.extra,
+                                 prev_raised=self._prev_raised)
         return target
 
     def bedrooms(self) -> list[Bedroom]:
@@ -457,6 +479,9 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
                                            steering=action.status != "fallback",
                                            before=before)
                 self.tracker.stats.setpoint_writes += 1
+                # the raise (solar boost, low price) carried by the setpoint now on the
+                # thermostat: when it is taken back, it comes off the setpoint again
+                self._prev_raised = target.boost_k if action.status != "fallback" else 0.0
             else:
                 action = Action(None, "error", f"could not write {action.write} C")
         self.action = action
@@ -598,6 +623,14 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
                 temp_sum=v.get("temp", 0.0), temp_days=1 if "temp" in v else 0,
             )
         return out
+
+    def _pv_forecast_ok(self, now: datetime) -> bool:
+        """The solar forecast for the coming hour still gives a surplus (True without one)."""
+        if not self.option(OPT_SOLAR_ENTITY) or not self._slots:
+            return True
+        hour = [s.pv_kw for s in self._slots if now - QUARTER < s.start <= now + timedelta(hours=1)]
+        return pv_forecast_ok(hour, float(self.option(OPT_BASE_LOAD)),
+                              float(self.option(OPT_PV_RUN_THRESHOLD)))
 
     def build_slots(self) -> list[Slot]:
         """Quarter slots from the Jeroen.nl price list, with solar and temperature per hour."""

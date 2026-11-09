@@ -6,7 +6,7 @@ to devices.
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta
 from enum import StrEnum
 from typing import Any
@@ -335,3 +335,42 @@ def _decide(running, floor_margin, inputs, surplus, peak, tracker, now, settings
     if floor_low:
         return result(Advice.WAIT, "floor low but living room warm enough")
     return result(Advice.WAIT, "no run needed")
+
+
+PV_START_WINDOW = timedelta(minutes=5)
+
+
+def average_surplus(samples: list[tuple[datetime, float]], now: datetime,
+                    window: timedelta = PV_START_WINDOW) -> float:
+    """Average solar surplus (W) over the window, 0 while less than the window is known
+    (after a restart a run on solar waits until five minutes of readings are in)."""
+    recent = [(t, v) for t, v in samples if now - t <= window]
+    if not recent or now - min(t for t, _ in recent) < window - timedelta(minutes=1):
+        return 0.0
+    return sum(v for _, v in recent) / len(recent)
+
+
+def confirm_pv_start(evaluation: Evaluation, avg_surplus_w: float, threshold_w: float,
+                     forecast_ok: bool) -> Evaluation:
+    """A run on solar only starts on the 5-minute average surplus and when the forecast for
+    the coming hour also gives a surplus. A short burst of sun between clouds would
+    otherwise start a run that then goes on for the minimum run time on grid power."""
+    if evaluation.advice != Advice.RUN or evaluation.cause != "pv":
+        return evaluation
+    if avg_surplus_w < threshold_w:
+        return replace(evaluation, advice=Advice.WAIT, cause=None,
+                       reason="solar surplus not steady yet (5-minute average below the threshold)")
+    if not forecast_ok:
+        return replace(evaluation, advice=Advice.WAIT, cause=None,
+                       reason="solar surplus expected to drop within the hour")
+    return evaluation
+
+
+def pv_forecast_ok(pv_kw_next_hour: list[float], base_load_kw: float, threshold_w: float) -> bool:
+    """The expected solar production for the coming hour minus the base load is at least
+    half the start threshold (the forecast is coarse: hourly and often on the low side).
+    Without a forecast the start is not held back."""
+    if not pv_kw_next_hour:
+        return True
+    expected_w = (sum(pv_kw_next_hour) / len(pv_kw_next_hour) - base_load_kw) * 1000
+    return expected_w >= threshold_w / 2

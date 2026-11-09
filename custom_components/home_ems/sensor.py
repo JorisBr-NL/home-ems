@@ -73,7 +73,7 @@ def _target_attrs(c: HomeEmsCoordinator) -> dict[str, Any]:
     t = c.target
     current = c.current_setpoint()
     return {
-        "mode": "shadow",
+        "mode": "control" if c.control else "shadow",
         "source": t.source if t else None,
         "reason": t.reason if t else None,
         "current_setpoint": current,

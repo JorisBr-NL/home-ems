@@ -36,6 +36,7 @@ runs gently. During a run the setpoint follows the room up only (room + hold off
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING
@@ -100,7 +101,8 @@ class PvBoost:
     going into the batteries could also go into the heat pump, and heat in the house comes
     first (COP ~5 against ~12% battery losses). Every `interval` the average of the
     readings since the last step decides: above the margin going out, the extra gap goes
-    up one step; above the margin coming in, one step down; within the margin it stays.
+    up one step; above the margin coming in, it halves (rounded down to a step), so a cloud
+    takes the extra gap away fast; within the margin it stays.
     The average keeps a cooker or a kettle from moving the gap. At rest without export it
     is 0 at once. The surplus is not used here: it includes what the heat pump already
     takes, and running harder on that only pulls power from the grid.
@@ -117,8 +119,11 @@ class PvBoost:
     def update(self, grid_w: float | None, running: bool | None, now: datetime,
                interval: timedelta, s: ArbiterSettings) -> float:
         top = max(0.0, s.gap_max - s.hold_offset)
-        if s.boost_margin_w <= 0 or grid_w is None or top == 0:
+        if s.boost_margin_w <= 0 or top == 0:
             return self.reset()
+        if grid_w is None:
+            # a grid reading that drops out for a minute keeps the step reached so far
+            return self.extra
         if not running and grid_w >= -s.boost_margin_w:
             return self.reset()
         self.samples.append(grid_w)
@@ -132,7 +137,8 @@ class PvBoost:
         if average < -s.boost_margin_w:
             self.extra = round(min(top, self.extra + s.boost_step), 2)
         elif average > s.boost_margin_w:
-            self.extra = round(max(0.0, self.extra - s.boost_step), 2)
+            steps = math.floor(round(self.extra / 2 / s.boost_step, 6))
+            self.extra = round(max(0.0, steps * s.boost_step), 2)
         return self.extra
 
 
@@ -165,7 +171,11 @@ def night_ceiling(day_ceiling: float, night: float, comfort_min: float) -> float
 def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_now: bool,
                     enabled: bool = True, settings: ArbiterSettings | None = None,
                     current_setpoint: float | None = None, bedroom_call: bool = False,
-                    price_now: float | None = None, pv_extra: float = 0.0) -> Target:
+                    price_now: float | None = None, pv_extra: float = 0.0,
+                    prev_raised: float = 0.0) -> Target:
+    """`prev_raised`: how far the gap was raised in the previous target (its boost_k). The
+    setpoint follows the room up only, but a raise that is taken back (less sun) comes off
+    the setpoint again."""
     s = settings or ArbiterSettings()
     if not enabled:
         return Target(None, "off", "EMS switched off: the thermostat schedule leads")
@@ -192,7 +202,8 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
         already asking for heat (it follows the room up, not down), at most `ceiling`."""
         value = living_temp + gap(base)
         if current_setpoint is not None and current_setpoint > living_temp:
-            value = max(value, current_setpoint)
+            # never below the setpoint already asking for heat, minus the raise it carried
+            value = max(value, current_setpoint - prev_raised + (gap(base) - base))
         return round(min(value, ceiling, s.comfort_max), 1)
 
     start, hold = on(s.start_offset, top), on(s.hold_offset, top)

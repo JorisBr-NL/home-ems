@@ -300,3 +300,31 @@ def test_battery_charging_counts_as_surplus_and_discharging_does_not():
     assert evaluate(Inputs(**base, battery_charge_w=800.0), RunTracker(), at(12)).pv_surplus_w == 800
     # discharging: no surplus
     assert evaluate(Inputs(**base, battery_charge_w=-500.0), RunTracker(), at(12)).pv_surplus_w == 0
+
+
+def test_solar_start_waits_for_a_steady_five_minute_surplus():
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc)
+    run = model.Evaluation(advice=model.Advice.RUN, reason="PV surplus available",
+                           heat_pump_running=False, floor_margin=None, pv_surplus_w=900.0,
+                           in_peak=False, cause="pv")
+    burst = [(now - timedelta(minutes=m), w) for m, w in ((5, 0.0), (4, 0.0), (3, 0.0), (2, 900.0), (1, 900.0), (0, 900.0))]
+    assert model.average_surplus(burst, now) < 650
+    held = model.confirm_pv_start(run, model.average_surplus(burst, now), 650, True)
+    assert (held.advice, held.cause) == (model.Advice.WAIT, None) and "steady" in held.reason
+    steady = [(now - timedelta(minutes=m), 900.0) for m in range(6)]
+    assert model.confirm_pv_start(run, model.average_surplus(steady, now), 650, True) is run
+    # right after a restart there is no five-minute history yet
+    assert model.average_surplus([(now, 900.0)], now) == 0.0
+    # the forecast for the coming hour drops: no start
+    assert model.confirm_pv_start(run, 900.0, 650, False).advice == model.Advice.WAIT
+    # other advice is left alone
+    other = model.Evaluation(advice=model.Advice.RUN, reason="x", heat_pump_running=False,
+                             floor_margin=None, pv_surplus_w=0.0, in_peak=False, cause="floor")
+    assert model.confirm_pv_start(other, 0.0, 650, False) is other
+
+
+def test_solar_forecast_for_the_coming_hour():
+    assert model.pv_forecast_ok([1.2, 1.1, 1.0, 0.9], 0.4, 650)       # ~650 W expected
+    assert not model.pv_forecast_ok([0.5, 0.5, 0.4, 0.4], 0.4, 650)   # ~50 W expected
+    assert model.pv_forecast_ok([], 0.4, 650)                          # no forecast: no hold

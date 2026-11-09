@@ -255,3 +255,35 @@ def test_night_ceiling_lets_the_house_cool():
     assert arbiter.target_setpoint(run, 18.3, True, settings=cheap, price_now=0.10).setpoint == 18.5
     day = arbiter.ArbiterSettings(run_ceiling=18.5, low_price=0.20)
     assert arbiter.target_setpoint(run, 18.3, True, settings=day, price_now=0.10).setpoint > 18.5
+
+
+def test_pv_boost_halves_on_import():
+    from datetime import datetime, timedelta, timezone
+    s = arbiter.ArbiterSettings(gap_max=0.6, boost_margin_w=300)
+    b = arbiter.PvBoost(extra=0.5)
+    t0 = datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc)
+    step = timedelta(minutes=5)
+    b.update(800.0, True, t0, step, s)
+    assert b.update(800.0, True, t0 + step, step, s) == 0.2
+    assert b.update(800.0, True, t0 + 2 * step, step, s) == 0.1
+    assert b.update(800.0, True, t0 + 3 * step, step, s) == 0.0
+
+
+def test_a_boost_taken_back_comes_off_the_setpoint():
+    run = ev(Advice.RUNNING, running=True, surplus=500.0)
+    # written with a raise of 0.3: room 18.8 + 0.1 + 0.3 = 19.2
+    t = arbiter.target_setpoint(run, 18.8, False, current_setpoint=19.2, pv_extra=0.0, prev_raised=0.3)
+    assert (t.setpoint, t.boost_k) == (18.9, 0.0)
+    t = arbiter.target_setpoint(run, 18.8, False, current_setpoint=19.2, pv_extra=0.1, prev_raised=0.3)
+    assert t.setpoint == 19.0
+    # without a raise the setpoint still never follows the room down
+    t = arbiter.target_setpoint(run, 18.6, False, current_setpoint=19.0, prev_raised=0.0)
+    assert t.setpoint == 19.0
+
+
+def test_pv_boost_keeps_its_step_when_the_grid_reading_drops_out():
+    from datetime import datetime, timedelta, timezone
+    s = arbiter.ArbiterSettings(gap_max=0.6, boost_margin_w=300)
+    b = arbiter.PvBoost(extra=0.3)
+    now = datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc)
+    assert b.update(None, True, now, timedelta(minutes=5), s) == 0.3

@@ -184,36 +184,120 @@
       },
       "planner": {
         "title": "Planner and advice",
-        "description": "Data sources for the day planner and the thresholds of the advice. Home EMS still runs in observation mode and changes nothing.",
-        "data": {
-          "price_entity": "Electricity price sensor (Jeroen.nl, attribute prices)",
-          "solar_entity": "Solar forecast sensor (Jeroen.nl, today, attribute hours)",
-          "weather_entity": "Weather entity (hourly temperature forecast)",
-          "comfort_setpoint": "Comfort setpoint living room",
-          "floor_rule_band": "Floor rule only below comfort setpoint +",
-          "floor_min_margin": "Minimum floor margin (flowmeter − living room)",
-          "pv_run_threshold_w": "Solar surplus for a run",
-          "min_run_minutes": "Minimum run time",
-          "expensive_share_pct": "Price peak: most expensive share of the day",
-          "max_gap_hours": "Longest time without a run (planner)",
-          "base_load_kw": "House base load besides the heat pump (planner)",
-          "comfort_min": "Comfort minimum (living room and kitchen)",
-          "comfort_max": "Comfort maximum (top of a run on solar or a low price)",
-          "living_min": "Living room minimum at night (by day the comfort setpoint is the minimum)",
-          "off_margin_k": "Off level below the living room minimum (tado only as a safety net)",
-          "capacity_kwh_k": "Heat capacity of the house (planner)",
-          "heat_rate_kw": "Heat per run-hour at 0 °C outside (planner)",
-          "heat_rate_slope": "Heat per run-hour: less per °C warmer outside (planner)",
-          "gas_price_entity": "Gas price sensor (Jeroen.nl, all-in per m³)",
-          "min_pause_hours": "Shortest pause between planned runs (shorter pauses are filled)",
-          "run_headroom_k": "Run ceiling above the comfort setpoint by day (top of a run; on solar up to the comfort maximum)",
-          "start_band_k": "Planned run: start only this far below the top (room to climb, long runs)",
-          "night_ceiling": "Night: run ceiling (°C, never below the comfort minimum), 0 = off",
-          "night_start": "Night from",
-          "night_end": "Night until",
-          "gap_max_k": "Largest gap setpoint − room (solar or low price)",
-          "low_price_eur": "Low price (all-in) for the largest gap, 0 = off",
-          "boost_margin_w": "Solar boost: step the gap up or down beyond this 5-minute average export or import, 0 = off"
+        "description": "Home EMS decides when the heat pump runs and writes the living room setpoint (with the control switch on). Between runs the setpoint is the minimum minus the off margin, so tado does nothing by itself; a run starts just above the room and stops at the top. Open a section to change it.",
+        "sections": {
+          "temperatures": {
+            "name": "Temperatures by day",
+            "description": "Lower and upper limit of the living room during the day.",
+            "data": {
+              "comfort_setpoint": "Comfort setpoint living room",
+              "run_headroom_k": "Run ceiling above the comfort setpoint",
+              "comfort_max": "Comfort maximum",
+              "comfort_min": "Comfort minimum (living room and kitchen)",
+              "off_margin_k": "Off margin below the minimum"
+            },
+            "data_description": {
+              "comfort_setpoint": "Lower limit by day: at this temperature (+0.1) Home EMS starts a run itself. Also the target of the planner.",
+              "run_headroom_k": "Top of a run by day = comfort setpoint + this. At the top the run stops at once. 0.5 gives long runs (e.g. 19.0 to 19.5).",
+              "comfort_max": "Top of a run on solar surplus or at a low price: heat stored in the house. Also the highest setpoint Home EMS ever writes.",
+              "comfort_min": "Safety limit: below this in the living room or the kitchen a run always starts, also at night and in a price peak.",
+              "off_margin_k": "Setpoint between runs = minimum − this (by day the comfort setpoint, at night the night minimum). tado then only heats by itself as a safety net when Home EMS or Home Assistant is down."
+            }
+          },
+          "night": {
+            "name": "Night",
+            "description": "During the night window the house may cool down.",
+            "data": {
+              "living_min": "Living room minimum at night",
+              "night_ceiling": "Night: run ceiling",
+              "night_start": "Night from",
+              "night_end": "Night until"
+            },
+            "data_description": {
+              "living_min": "Lower limit at night: at this temperature (+0.1) Home EMS starts a run.",
+              "night_ceiling": "Top of a run at night (never below the comfort minimum; a run always climbs at least the start band). 0 = night minimum + start band.",
+              "night_start": "Start of the night window.",
+              "night_end": "End of the night window: from here the day limits apply. Set it an hour or so before you get up, so the house is warm in time."
+            }
+          },
+          "runs": {
+            "name": "Runs",
+            "description": "How long runs and pauses are.",
+            "data": {
+              "min_run_minutes": "Minimum run time",
+              "start_band_k": "Start band",
+              "min_pause_hours": "Shortest pause between planned runs",
+              "max_gap_hours": "Longest time without a run"
+            },
+            "data_description": {
+              "min_run_minutes": "A run that has started goes on at least this long, also past the top. 30 to 90 minutes avoids short cycling.",
+              "start_band_k": "A planned run only starts while the room is at least this far below the top, so it has room to climb and lasts long.",
+              "min_pause_hours": "Planner: pauses shorter than this are filled, so planned runs merge into one long run.",
+              "max_gap_hours": "Planner: a safety net that plans a run when there has been none for this long."
+            }
+          },
+          "solar_price": {
+            "name": "Solar and price",
+            "description": "Using solar surplus and cheap hours.",
+            "data": {
+              "pv_run_threshold_w": "Solar surplus for a run",
+              "boost_margin_w": "Solar boost margin",
+              "gap_max_k": "Largest gap setpoint − room",
+              "low_price_eur": "Low price",
+              "expensive_share_pct": "Price peak"
+            },
+            "data_description": {
+              "pv_run_threshold_w": "A run starts on solar when the 5-minute average surplus is at least this and the forecast for the coming hour still gives a surplus.",
+              "boost_margin_w": "During a run the gap goes up 0.1 per 5 minutes while the average export is above this, and halves when the average import is above it. 0 = off.",
+              "gap_max_k": "Largest gap on solar or at a low price. A larger gap lets the heat pump run harder.",
+              "low_price_eur": "At or below this all-in price per kWh the gap is the largest and the top is the comfort maximum. 0 = off.",
+              "expensive_share_pct": "The most expensive share of the quarters of the day counts as a price peak: the advice starts no run there (the minimums still do), and a run does not run on to the top."
+            }
+          },
+          "floor": {
+            "name": "Floor",
+            "description": "Rule for the floor water (flowmeter).",
+            "data": {
+              "floor_rule_band": "Floor rule only below comfort setpoint +",
+              "floor_min_margin": "Floor minimum margin"
+            },
+            "data_description": {
+              "floor_rule_band": "The floor rule only starts a run while the living room is below the comfort setpoint plus this.",
+              "floor_min_margin": "Floor water minus living room below this: run (while the floor pump circulates)."
+            }
+          },
+          "house_model": {
+            "name": "House and heat pump (planner)",
+            "description": "The planner uses these to estimate how many run-hours are needed.",
+            "data": {
+              "heat_rate_kw": "Heat per run-hour at 0 °C outside",
+              "heat_rate_slope": "Heat per run-hour: less per °C warmer",
+              "capacity_kwh_k": "Heat capacity of the house",
+              "base_load_kw": "Base load of the house"
+            },
+            "data_description": {
+              "heat_rate_kw": "Heat the heat pump delivers while it runs, at 0 °C outside (measured Quatt Duo: about 7.0 kW).",
+              "heat_rate_slope": "How much less heat per degree warmer outside (measured: about 0.4 kW per °C). 0 = the same at every temperature.",
+              "capacity_kwh_k": "Heat stored per degree room temperature. A room above the target lowers the need, a room below it raises it.",
+              "base_load_kw": "Use of the house besides the heat pump, for the solar forecast."
+            }
+          },
+          "sources": {
+            "name": "Sources",
+            "description": "Sensors for prices, solar and weather.",
+            "data": {
+              "price_entity": "Electricity price sensor",
+              "solar_entity": "Solar forecast",
+              "weather_entity": "Weather entity",
+              "gas_price_entity": "Gas price sensor"
+            },
+            "data_description": {
+              "price_entity": "Jeroen.nl electricity price, attribute prices.",
+              "solar_entity": "Jeroen.nl solar forecast for today, attribute hours.",
+              "weather_entity": "Hourly temperature forecast.",
+              "gas_price_entity": "Jeroen.nl gas price, all-in per m³ (hybrid: the boiler where it is cheaper)."
+            }
+          }
         }
       },
       "control": {
