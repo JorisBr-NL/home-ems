@@ -223,9 +223,10 @@ async def test_planner_options_in_sections_are_saved_flat(recorder_mock, hass, e
     assert "temperatures" not in entry.options
 
 
-async def test_fixed_tariff_switches_the_price_rules_off(recorder_mock, hass, entry):
+async def test_fixed_tariff_switches_the_price_rules_off(recorder_mock, hass):
     set_house(hass)
-    hass.config_entries.async_update_entry(entry, options={**NO_NIGHT, "dynamic_from": "2099-01-01"})
+    entry = MockConfigEntry(domain=DOMAIN, title="Home EMS", data=DATA, unique_id=DOMAIN,
+                            options={**NO_NIGHT, "dynamic_from": "2099-01-01"})
     await _setup(hass, entry)
     coordinator = entry.runtime_data
     assert coordinator.fixed_tariff() is True
@@ -254,7 +255,11 @@ async def test_unreachable_thermostat_gives_a_notification_and_no_writes(recorde
 
 async def test_pause_after_a_change_by_hand_survives_a_reload(recorder_mock, hass, entry):
     set_house(hass)
+    async_mock_service(hass, "climate", "set_temperature")
     await _setup(hass, entry)
+    # the pause only exists while control is on (switching control off clears it)
+    await hass.services.async_call("switch", "turn_on", {"entity_id": CONTROL}, blocking=True)
+    await hass.async_block_till_done()
     until = dt_util.now() + timedelta(hours=1)
     entry.runtime_data.executor.override_until = until
     assert await hass.config_entries.async_reload(entry.entry_id)
