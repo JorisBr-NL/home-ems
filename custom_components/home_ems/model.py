@@ -254,6 +254,8 @@ def is_expensive(price_now: float | None, day_prices: tuple[float, ...], share: 
     if price_now is None or not day_prices or share <= 0:
         return False
     ranked = sorted(day_prices, reverse=True)
+    if ranked[0] - ranked[-1] < 1e-9:
+        return False   # a flat price has no peak
     threshold = ranked[min(len(ranked), math.ceil(len(ranked) * share)) - 1]
     return price_now >= threshold
 

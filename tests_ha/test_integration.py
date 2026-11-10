@@ -203,3 +203,60 @@ async def test_solar_boost_survives_a_reload(recorder_mock, hass, entry):
     assert entry.runtime_data is not coordinator
     assert entry.runtime_data.pv_boost.extra == 0.3
     assert entry.runtime_data._prev_raised == 0.3
+
+
+async def test_planner_options_in_sections_are_saved_flat(recorder_mock, hass, entry):
+    set_house(hass)
+    await _setup(hass, entry)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "planner"})
+    assert result["type"] is FlowResultType.FORM
+    # every section is required; the fields in it have defaults
+    user_input = {str(key): {} for key in result["data_schema"].schema}
+    user_input["temperatures"]["comfort_setpoint"] = 19.2
+    user_input["solar_price"]["dynamic_from"] = "2027-01-16"
+    result = await hass.config_entries.options.async_configure(result["flow_id"], user_input)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["comfort_setpoint"] == 19.2
+    assert entry.options["dynamic_from"] == "2027-01-16"
+    assert "temperatures" not in entry.options
+
+
+async def test_fixed_tariff_switches_the_price_rules_off(recorder_mock, hass, entry):
+    set_house(hass)
+    hass.config_entries.async_update_entry(entry, options={**NO_NIGHT, "dynamic_from": "2099-01-01"})
+    await _setup(hass, entry)
+    coordinator = entry.runtime_data
+    assert coordinator.fixed_tariff() is True
+    assert coordinator.settings().expensive_share == 0
+    assert coordinator.arbiter_settings().low_price == 0
+
+
+async def test_unreachable_thermostat_gives_a_notification_and_no_writes(recorder_mock, hass, entry, freezer):
+    set_house(hass)
+    calls = async_mock_service(hass, "climate", "set_temperature")
+    await _setup(hass, entry)
+    await hass.services.async_call("switch", "turn_on", {"entity_id": CONTROL}, blocking=True)
+    await hass.async_block_till_done()
+    written = len(calls)
+    hass.states.async_set(LIVING, "unavailable")
+    await _refresh(hass, entry)
+    freezer.tick(timedelta(minutes=11))
+    await _refresh(hass, entry)
+    assert len(calls) == written                              # nothing written into it
+    assert hass.states.get(STATUS).state == "error"
+    assert entry.runtime_data._thermostat_alert is True
+    set_house(hass, setpoint=21.0)                            # back, with another setpoint
+    await _refresh(hass, entry)
+    assert entry.runtime_data._thermostat_alert is False
+
+
+async def test_pause_after_a_change_by_hand_survives_a_reload(recorder_mock, hass, entry):
+    set_house(hass)
+    await _setup(hass, entry)
+    until = dt_util.now() + timedelta(hours=1)
+    entry.runtime_data.executor.override_until = until
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.runtime_data.executor.override_until == until
