@@ -336,6 +336,9 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
     if plan_run_now:
         if running:
             return result(hold, "planner", "planned run in progress")
+        if s.night:
+            # at night only the night minimum starts a run: the house may cool down
+            return result(off, "idle", "planned run, but it is night: wait for the night minimum")
         if room_to_climb:
             return result(start, "planner", "planned run starts")
         return result(off, "idle", f"planned run, but the room is close to the top ({top:.1f}): wait")

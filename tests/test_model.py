@@ -133,8 +133,9 @@ def test_price_peak_ranks_the_whole_day_not_what_is_left():
     price_now, prices = model.prices_today(rows, late)
     assert price_now == 0.20 and len(prices) == 96
     assert not model.is_expensive(price_now, prices, 0.25)
-    # only the rest of the day (the old behaviour) would have made it a peak
-    assert model.is_expensive(price_now, prices[-2:], 0.25)
+    # a flat price has no peak (also what is left of a day)
+    assert not model.is_expensive(price_now, prices[-2:], 0.25)
+    assert not model.is_expensive(0.25, (0.25,) * 96, 0.25)
     evening = datetime(2026, 11, 2, 18, 0, tzinfo=CET)
     assert model.is_expensive(*model.prices_today(rows, evening), 0.25)
 

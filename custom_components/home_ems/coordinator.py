@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from homeassistant.components import persistent_notification
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import statistics_during_period
 from homeassistant.config_entries import ConfigEntry
@@ -43,6 +44,7 @@ from .const import (
     OPT_COMFORT_MAX,
     OPT_COMFORT_MIN,
     OPT_COMFORT_SETPOINT,
+    OPT_DYNAMIC_FROM,
     OPT_COST_SETTINGS,
     OPT_EXPENSIVE_SHARE,
     OPT_EXPORT_DIR,
@@ -165,7 +167,10 @@ STORAGE_VERSION = 1
 RUN_SOURCES = ("comfort_min", "floor", "minimum", "keep_running", "planner", "pv", "to_top")
 SAVE_DELAY = 60  # seconds
 BOOST_KEEP = timedelta(minutes=15)  # a boost older than this is not taken back after a restart
+THERMOSTAT_ALERT = timedelta(minutes=10)  # notify when the thermostat is unreachable this long
+FLAT_PRICE = 0.25  # stand-in price per kWh while the tariff is fixed (only the COP then decides)
 LATCH_GRACE = timedelta(minutes=10)  # a gap in the heat pump power this short is still a run
+DAY_JOIN = timedelta(minutes=45)  # this close to the end of the night a run gets the day top
 PRE_DAY = timedelta(hours=2, minutes=30)  # a night run this close to the end of the night gets the day top
 
 type HomeEmsConfigEntry = ConfigEntry[HomeEmsCoordinator]
@@ -208,6 +213,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self._surplus_samples: list[tuple[datetime, float]] = []
         self._prev_raised = 0.0
         self.run_latch = RunLatch()
+        self._thermostat_missing: datetime | None = None
+        self._thermostat_alert = False
         self._pv_hold: bool | None = None
         self.plan_status = PLAN_NO_PRICES
         self._temps: dict[datetime, float] = {}   # hour start (UTC) -> forecast temperature
@@ -223,6 +230,18 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         default = OPTION_DEFAULTS.get(key, CONTROL_DEFAULTS.get(key, BEDROOM_DEFAULTS.get(key)))
         return self.config_entry.options.get(key, default)
 
+    def fixed_tariff(self, now: datetime | None = None) -> bool:
+        """Before the first day of the dynamic contract the price is the same all day (and
+        solar counts at the same price): the price rules are off and only the COP decides."""
+        value = self.option(OPT_DYNAMIC_FROM)
+        if not value:
+            return False
+        try:
+            first = date.fromisoformat(str(value))
+        except ValueError:
+            return False
+        return dt_util.as_local(now or dt_util.now()).date() < first
+
     def settings(self, now: datetime | None = None) -> Settings:
         night = self.night_now(now)
         floor_reference = (float(self.option(OPT_LIVING_MIN)) if night
@@ -233,7 +252,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             min_run=timedelta(minutes=float(self.option(OPT_MIN_RUN))),
             floor_min_margin=float(self.option(OPT_FLOOR_MIN_MARGIN)),
             pv_run_threshold_w=float(self.option(OPT_PV_RUN_THRESHOLD)),
-            expensive_share=float(self.option(OPT_EXPENSIVE_SHARE)) / 100,
+            expensive_share=(0.0 if self.fixed_tariff(now)
+                             else float(self.option(OPT_EXPENSIVE_SHARE)) / 100),
             comfort_setpoint=float(self.option(OPT_COMFORT_SETPOINT)),
             floor_rule_band=float(self.option(OPT_FLOOR_RULE_BAND)),
             comfort_min=float(self.option(OPT_COMFORT_MIN)),
@@ -472,20 +492,32 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
                 ceiling = night_ceiling(ceiling, night_top, comfort_min)
             else:
                 ceiling = min(ceiling, living_min + float(self.option(OPT_START_BAND)))
-            # a run near the end of the night goes on to the day top: one run instead of a
-            # night run and a new start when the day limits begin
-            if self._to_night_end(now) <= PRE_DAY:
+            # a run near the end of the night goes on to the level the day starts at (the
+            # comfort setpoint), not higher: one run instead of a night run and a new start
+            # when the day limits begin
+            to_end = self._to_night_end(now)
+            if to_end <= PRE_DAY:
+                ceiling = min(day_top, max(ceiling, comfort))
+            if to_end <= DAY_JOIN:
+                # right before the day a run that is going is not stopped at the comfort
+                # setpoint only to start again minutes later on the day limits
                 ceiling = day_top
         if self.run_latch.since is not None and self.run_latch.ceiling is not None:
-            # a run keeps the top it started with (a day run is not cut at 20:00)
-            ceiling = max(ceiling, self.run_latch.ceiling)
+            # a run keeps the top it started with, but a day run that is still going in the
+            # night gets the night top once it has had its minimum run time
+            carried = (night and self.run_latch.ceiling > ceiling
+                       and (now or dt_util.now()) - self.run_latch.since
+                       >= timedelta(minutes=float(self.option(OPT_MIN_RUN))))
+            if not carried:
+                ceiling = max(ceiling, self.run_latch.ceiling)
         return ArbiterSettings(comfort_min=comfort_min,
                                comfort_max=float(self.option(OPT_COMFORT_MAX)),
                                run_ceiling=ceiling,
                                night=night,
                                gap_max=float(self.option(OPT_GAP_MAX)),
                                boost_margin_w=float(self.option(OPT_BOOST_MARGIN)),
-                               low_price=float(self.option(OPT_LOW_PRICE)),
+                               low_price=(0.0 if self.fixed_tariff(now)
+                                          else float(self.option(OPT_LOW_PRICE))),
                                living_min=living_min,
                                off_margin=float(self.option(OPT_OFF_MARGIN)),
                                start_band=float(self.option(OPT_START_BAND)))
@@ -578,9 +610,43 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             min_step=float(self.option(OPT_WRITE_STEP)),
         )
 
+    def _thermostat_reachable(self) -> bool:
+        state = self.hass.states.get(self.config_entry.data.get(CONF_LIVING_CLIMATE) or "")
+        return state is not None and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN)
+
+    def _watch_thermostat(self, now: datetime) -> bool:
+        """True when the thermostat can be written. Unreachable for a while with control on:
+        one notification (the thermostat then holds its last setpoint by itself)."""
+        notification_id = f"{DOMAIN}_thermostat_unreachable"
+        if self._thermostat_reachable():
+            if self._thermostat_alert:
+                persistent_notification.async_dismiss(self.hass, notification_id)
+            self._thermostat_missing, self._thermostat_alert = None, False
+            return True
+        if self._thermostat_missing is None:
+            self._thermostat_missing = now
+        if (self.control and not self._thermostat_alert
+                and now - self._thermostat_missing >= THERMOSTAT_ALERT):
+            self._thermostat_alert = True
+            persistent_notification.async_create(
+                self.hass,
+                "Home EMS cannot reach the living room thermostat. The thermostat keeps its "
+                "last setpoint by itself until the connection is back. / Home EMS kan de "
+                "thermostaat in de woonkamer niet bereiken. De thermostaat houdt zelf het "
+                "laatste setpoint vast tot de verbinding terug is.",
+                title="Home EMS: thermostat unreachable / thermostaat onbereikbaar",
+                notification_id=notification_id)
+        return False
+
     async def _async_execute(self, now: datetime) -> None:
         target = self.target
         if target is None:
+            return
+        if not self._watch_thermostat(now):
+            # no writes into an unreachable thermostat (they fail and fill the log); the
+            # first cycle after it is back writes the target at once
+            if self.control:
+                self.action = Action(None, "error", "thermostat unreachable")
             return
         current = self.current_setpoint()
         living = self._climate_temperature(self.config_entry.data.get(CONF_LIVING_CLIMATE))
@@ -750,9 +816,14 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         """Quarter slots from the Jeroen.nl price list, with solar and temperature per hour."""
         price_state = self.hass.states.get(self.option(OPT_PRICE_ENTITY) or "")
         solar_state = self.hass.states.get(self.option(OPT_SOLAR_ENTITY) or "")
-        return build_slots(
+        slots = build_slots(
             price_state.attributes.get("prices", []) if price_state else [],
             solar_state.attributes.get("hours", []) if solar_state else [],
             self._temps,
             self._float_state(self.config_entry.data.get(CONF_OUTSIDE_TEMPERATURE)),
         )
+        if self.fixed_tariff():
+            # fixed tariff: every quarter costs the same and solar is worth the same, so the
+            # cost per kWh heat only depends on the COP (the warmest hours are the cheapest)
+            slots = [replace(s, price=FLAT_PRICE, market=FLAT_PRICE, forecast=False) for s in slots]
+        return slots

@@ -244,14 +244,16 @@
               "boost_margin_w": "Zonneboost: marge",
               "gap_max_k": "Grootste gat setpoint − kamer",
               "low_price_eur": "Lage prijs",
-              "expensive_share_pct": "Prijspiek"
+              "expensive_share_pct": "Prijspiek",
+              "dynamic_from": "Dynamisch contract vanaf"
             },
             "data_description": {
               "pv_run_threshold_w": "Een run start op zon als het gemiddelde overschot over 5 minuten minstens dit is en de verwachting voor het komende uur nog overschot geeft.",
               "boost_margin_w": "Tijdens een run gaat het gat 0,1 omhoog per 5 minuten zolang de gemiddelde teruglevering hierboven zit, en halveert het als de gemiddelde afname hierboven zit. 0 = uit.",
               "gap_max_k": "Grootste gat bij zon of een lage prijs. Een groter gat laat de warmtepomp harder draaien.",
               "low_price_eur": "Bij deze all-in prijs per kWh of lager is het gat het grootst en is de bovenkant het comfortmaximum. 0 = uit.",
-              "expensive_share_pct": "Het duurste deel van de kwartieren van de dag telt als prijspiek: daar start het advies geen run (de minimums wel), en een run loopt niet door tot de bovenkant."
+              "expensive_share_pct": "Het duurste deel van de kwartieren van de dag telt als prijspiek: daar start het advies geen run (de minimums wel), en een run loopt niet door tot de bovenkant.",
+              "dynamic_from": "Eerste dag van een contract met een prijs per kwartier. Vóór deze datum doet de prijs er niet toe (vast tarief): geen prijspiek, geen boost bij een lage prijs, en de planner plant alleen op de COP (de warmste uren). Leeg = prijzen tellen mee."
             }
           },
           "floor": {

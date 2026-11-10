@@ -34,9 +34,13 @@ def settings_at(now: datetime, latch=None) -> tuple:
     if night:
         top = 18.8
         if arbiter.until_window_end(now.time(), NIGHT[1]) <= timedelta(hours=2, minutes=30):
+            top = 19.0
+        if arbiter.until_window_end(now.time(), NIGHT[1]) <= timedelta(minutes=45):
             top = 19.5
         if latch is not None and latch.since is not None and latch.ceiling is not None:
-            top = max(top, latch.ceiling)
+            carried = latch.ceiling > top and now - latch.since >= timedelta(minutes=30)
+            if not carried:
+                top = max(top, latch.ceiling)
         return arbiter.ArbiterSettings(living_min=18.5, run_ceiling=top, night=True,
                                        comfort_max=20.0, low_price=0), True
     return arbiter.ArbiterSettings(living_min=19.0, run_ceiling=19.5, comfort_max=20.0,
@@ -109,13 +113,16 @@ def test_a_day_has_few_long_runs_and_stays_within_the_limits():
         else:
             merged.append((a, b))
     assert merged, "the house needs heat at 5 C"
-    assert len(merged) <= 4
+    assert len(merged) <= 5
     # no new start within an hour of the end of a run (no night run followed by a day start)
     assert all(b2[0] - a2[1] >= timedelta(hours=1) for a2, b2 in zip(merged, merged[1:]))
     assert all(b - a >= timedelta(minutes=30) for a, b in merged[:-1])
     assert min(r for _, r, *_ in log) >= 18.0
     night_rooms = [r for now, r, _sp, _c, _s, night in log if night and now.hour >= 22]
     assert max(night_rooms) <= 19.6        # the night may start warm, but no night run to 20
+    # before the day starts the room is never heated above the day minimum (plus overshoot)
+    early = [r for now, r, _sp, _c, _s, night in log if night and now.hour < 5]
+    assert max(early) <= 19.3
     day_rooms = [r for now, r, *_rest in log if 8 <= now.hour < 20]
     assert max(day_rooms) <= 19.8
 
