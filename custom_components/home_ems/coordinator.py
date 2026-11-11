@@ -24,6 +24,7 @@ from .const import (
     BEDROOM_DEFAULTS,
     CONF_BATTERY_CHARGE_POSITIVE,
     CONF_BATTERY_POWER,
+    CONF_HEAT_OUTPUT,
     CONF_FLOW_RATE,
     CONF_FLOW_TEMPERATURE,
     CONF_GRID_POWER,
@@ -63,6 +64,7 @@ from .const import (
     OPT_PV_RUN_THRESHOLD,
     OPT_HEAT_RATE,
     OPT_HEAT_RATE_SLOPE,
+    OPT_PLANNER_MODEL,
     OPT_LIVING_MIN,
     OPT_NIGHT_CEILING,
     OPT_OFF_MARGIN,
@@ -132,6 +134,8 @@ from .overview import (
     years_csv,
 )
 from .planner import QUARTER, Plan, PlannerSettings, Slot, build_slots, hour_of, plan
+from .learn import HeatPumpLearner
+from .planner_model import ModelSettings, plan_with_model
 from .watch import CLEAR, RAISE, DemandWatch, OutageWatch
 
 _LOGGER = logging.getLogger(__name__)
@@ -213,9 +217,12 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self._surplus_samples: list[tuple[datetime, float]] = []
         self._prev_raised = 0.0
         self.run_latch = RunLatch()
+        self.learner = HeatPumpLearner()
+        self._learned_at: datetime | None = None
         self.outage_watch = OutageWatch()
         self.demand_watch = DemandWatch()
         self._pv_hold: bool | None = None
+        self.model_plan: Plan | None = None
         self.plan_status = PLAN_NO_PRICES
         self._temps: dict[datetime, float] = {}   # hour start (UTC) -> forecast temperature
         self._temps_fetched: datetime | None = None
@@ -270,6 +277,9 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             heat_rate_kw=float(self.option(OPT_HEAT_RATE)),
             heat_rate_slope=float(self.option(OPT_HEAT_RATE_SLOPE)),
             gas_price_m3=self._float_state(self.option(OPT_GAS_ENTITY)),
+            # learned from the heat output sensor (if set and enough running in a bucket)
+            cop_points=tuple((t, cop) for t, cop, _ in self.learner.points()),
+            heat_points=tuple((t, kw) for t, _, kw in self.learner.points()),
         )
 
     async def _async_setup(self) -> None:
@@ -280,6 +290,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             self.tracker = RunTracker.from_dict(stored, now)
             self._restore_boost(stored.get("boost"), now)
             self._restore_control(stored, now)
+            self.learner = HeatPumpLearner.from_dict(stored.get("learned"))
 
     def _stored(self) -> dict[str, Any]:
         """Run state for the store, plus the solar boost and the raise on the thermostat,
@@ -287,7 +298,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         return {**self.tracker.to_dict(), "boost": {
             "extra": self.pv_boost.extra, "raised": self._prev_raised,
             "at": dt_util.now().isoformat()},
-            "executor": self.executor.to_dict(), "latch": self.run_latch.to_dict()}
+            "executor": self.executor.to_dict(), "latch": self.run_latch.to_dict(),
+            "learned": self.learner.to_dict()}
 
     def _restore_boost(self, data: dict | None, now: datetime) -> None:
         """Take the boost back after a reload or a short restart (at most BOOST_KEEP old)."""
@@ -442,6 +454,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             _LOGGER.exception("Could not work out curtailment and appliances")
         await self._async_execute(now)
         self._watch_demand(now, evaluation.heat_pump_running, inputs.living_temp)
+        self._learn(now, evaluation.heat_pump_running, inputs.heat_pump_power_w)
         return evaluation
 
     def _solar_hold(self, inputs: Inputs, now: datetime, s: ArbiterSettings) -> bool:
@@ -477,12 +490,13 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             return timedelta(days=1)
         return until_window_end(dt_util.as_local(now or dt_util.now()).time(), end)
 
-    def arbiter_settings(self, now: datetime | None = None) -> ArbiterSettings:
+    def limits(self, now: datetime | None = None) -> tuple[float, float, bool]:
+        """Lower limit, top and night for a moment: the control and the model planner both
+        use this. Day: comfort setpoint to comfort setpoint + headroom; night: the night
+        minimum to the night ceiling (the day top in the last part of the night)."""
         comfort_min = float(self.option(OPT_COMFORT_MIN))
         comfort = float(self.option(OPT_COMFORT_SETPOINT))
         ceiling = comfort + float(self.option(OPT_RUN_HEADROOM))
-        # day: the comfort setpoint is the lower limit; night: the night minimum, and the
-        # night ceiling (if set) as the upper limit
         living_min = comfort
         night = self.night_now(now)
         if night:
@@ -503,6 +517,38 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
                 # right before the day a run that is going is not stopped at the comfort
                 # setpoint only to start again minutes later on the day limits
                 ceiling = day_top
+        ceiling = min(float(self.option(OPT_COMFORT_MAX)),
+                      max(ceiling, living_min + float(self.option(OPT_START_BAND))))
+        return living_min, ceiling, night
+
+    def _store_top(self, moment: datetime, top: float, night: bool) -> float:
+        """How high a planned storage run may heat: by day the comfort maximum; at night the
+        day top, but only with a dynamic contract (heat at night when it is clearly cheaper;
+        with a fixed tariff the night is for cooling down)."""
+        if not night:
+            return float(self.option(OPT_COMFORT_MAX))
+        if self.fixed_tariff(moment):
+            return top
+        day_top = float(self.option(OPT_COMFORT_SETPOINT)) + float(self.option(OPT_RUN_HEADROOM))
+        return max(top, day_top)
+
+    def _model_limits(self, moment: datetime) -> tuple[float, float, float, bool]:
+        """Lower limit, top, storage top and night for the model planner."""
+        low, top, night = self.limits(moment)
+        return low, top, self._store_top(moment, top, night), night
+
+    def arbiter_settings(self, now: datetime | None = None) -> ArbiterSettings:
+        comfort_min = float(self.option(OPT_COMFORT_MIN))
+        living_min, ceiling, night = self.limits(now)
+        night_store = False
+        if self.plan is not None and self.plan.model and bool(self.option(OPT_PLANNER_MODEL)):
+            moment = now or dt_util.now()
+            current = next((r for r in self.plan.runs if r.start <= moment < r.end), None)
+            if current is not None and current.reason == "store":
+                # a planned storage run (cheap hours before dearer ones) goes on to the storage
+                # top: by day the comfort maximum, at night (dynamic contract) the day top
+                ceiling = max(ceiling, self._store_top(moment, ceiling, night))
+                night_store = night
         if self.run_latch.since is not None and self.run_latch.ceiling is not None:
             # a run keeps the top it started with, but a day run that is still going in the
             # night gets the night top once it has had its minimum run time
@@ -515,6 +561,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
                                comfort_max=float(self.option(OPT_COMFORT_MAX)),
                                run_ceiling=ceiling,
                                night=night,
+                               night_store=night_store,
                                gap_max=float(self.option(OPT_GAP_MAX)),
                                boost_margin_w=float(self.option(OPT_BOOST_MARGIN)),
                                low_price=(0.0 if self.fixed_tariff(now)
@@ -635,6 +682,18 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             persistent_notification.async_dismiss(self.hass, notification_id)
         return reachable
 
+    def _learn(self, now: datetime, running: bool | None, el_w: float | None) -> None:
+        """Learn COP and heat per outdoor temperature from the heat output sensor."""
+        data = self.config_entry.data
+        minutes = 1.0
+        if self._learned_at is not None:
+            minutes = min(5.0, (now - self._learned_at).total_seconds() / 60)
+        self._learned_at = now
+        if not data.get(CONF_HEAT_OUTPUT):
+            return
+        self.learner.add(self._float_state(data.get(CONF_OUTSIDE_TEMPERATURE)),
+                         self._power_state(data.get(CONF_HEAT_OUTPUT)), el_w, running, minutes, now)
+
     def _watch_demand(self, now: datetime, running: bool | None, living: float | None) -> None:
         """The thermostat asks for heat (setpoint above the room) but the heat pump does not
         run: tado does not pass the demand on (seen on 11 Nov, one hour without heat)."""
@@ -726,8 +785,21 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         living = self._climate_temperature(self.config_entry.data.get(CONF_LIVING_CLIMATE))
         # a run in progress stays in the plan until its planned end
         current = next((r for r in self.plan.runs if r.start <= now < r.end), None) if self.plan else None
-        self.plan = plan(slots, now, self.planner_settings(), self.tracker.last_run_end, living,
-                         keep_until=current.end if current else None)
+        budget = plan(slots, now, self.planner_settings(), self.tracker.last_run_end, living,
+                      keep_until=current.end if current else None)
+        try:
+            self.model_plan = plan_with_model(
+                slots, now, living, self._model_limits,
+                self.planner_settings(),
+                ModelSettings(min_run=timedelta(minutes=float(self.option(OPT_MIN_RUN))),
+                              start_band=float(self.option(OPT_START_BAND)),
+                              reference_temp=float(self.option(OPT_COMFORT_SETPOINT))),
+                running=self.run_latch.since is not None)
+        except Exception:  # the model planner is new: it must never take the old one down
+            _LOGGER.exception("Could not make the plan with the house model")
+            self.model_plan = None
+        use_model = bool(self.option(OPT_PLANNER_MODEL)) and self.model_plan is not None
+        self.plan = self.model_plan if use_model else budget
         self.plan_status = PLAN_OK if self._temps else PLAN_NO_TEMPERATURES
 
     async def _async_refresh_temperatures(self, now: datetime) -> None:

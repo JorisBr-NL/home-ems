@@ -18,6 +18,7 @@ from .const import (
     BEDROOM_OPTIONS,
     CONF_BATTERY_CHARGE_POSITIVE,
     CONF_BATTERY_POWER,
+    CONF_HEAT_OUTPUT,
     CONF_CHILL_CLIMATE,
     CONF_FLOW_RATE,
     CONF_FLOW_TEMPERATURE,
@@ -61,6 +62,7 @@ from .const import (
     OPT_PV_RUN_THRESHOLD,
     OPT_HEAT_RATE,
     OPT_HEAT_RATE_SLOPE,
+    OPT_PLANNER_MODEL,
     OPT_LIVING_MIN,
     OPT_NIGHT_CEILING,
     OPT_OFF_MARGIN,
@@ -114,6 +116,9 @@ SCHEMA = vol.Schema(
         ),
         vol.Required(CONF_GRID_POWER): POWER,
         vol.Optional(CONF_OUTSIDE_TEMPERATURE): TEMPERATURE,
+        vol.Optional(CONF_HEAT_OUTPUT): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="sensor", device_class="power")
+        ),
         vol.Optional(CONF_CHILL_CLIMATE): CLIMATE,
         vol.Optional(CONF_BATTERY_POWER): selector.EntitySelector(
             selector.EntitySelectorConfig(domain="sensor", device_class="power", multiple=True)
@@ -330,6 +335,8 @@ class HomeEmsOptionsFlow(OptionsFlow):
                 number(OPT_HEAT_RATE_SLOPE, 0, 2, 0.05, "kW/°C"),
                 number(OPT_CAPACITY, 0, 100, 0.5, "kWh/K"),
                 number(OPT_BASE_LOAD, 0, 3, 0.05, "kW"),
+                (vol.Required(OPT_PLANNER_MODEL, default=bool(current[OPT_PLANNER_MODEL])),
+                 selector.BooleanSelector()),
             ]),
             "sources": (True, [
                 entity(OPT_PRICE_ENTITY),

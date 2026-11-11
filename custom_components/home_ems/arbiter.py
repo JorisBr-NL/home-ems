@@ -135,6 +135,8 @@ class ArbiterSettings:
     # At night (see in_window) the ceiling holds for every run, also with a low price
     # boost: the house may cool down, nobody needs 20 °C in the middle of the night.
     night: bool = False
+    # v0.11: a planned storage run (cheap hours) may start at night
+    night_store: bool = False
     # Variable gap, at most gap_max: on solar it follows the grid meter (PvBoost: steps of
     # boost_step while the 5-minute average export or import is above boost_margin_w, 0 = off); at a price
     # at or below low_price (all-in EUR/kWh, 0 = off) it is gap_max at once. With a boost
@@ -336,7 +338,7 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
     if plan_run_now:
         if running:
             return result(hold, "planner", "planned run in progress")
-        if s.night:
+        if s.night and not s.night_store:
             # at night only the night minimum starts a run: the house may cool down
             return result(off, "idle", "planned run, but it is night: wait for the night minimum")
         if room_to_climb:

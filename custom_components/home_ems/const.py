@@ -17,6 +17,7 @@ CONF_GRID_POWER = "grid_power"
 CONF_OUTSIDE_TEMPERATURE = "outside_temperature"
 CONF_CHILL_CLIMATE = "chill_climate"
 CONF_BATTERY_POWER = "battery_power"            # battery power sensors (optional, v0.10.4)
+CONF_HEAT_OUTPUT = "heat_output"                # heat pump heat output, W (optional, v0.11: learn COP)
 CONF_BATTERY_CHARGE_POSITIVE = "battery_charge_positive"   # True: positive = charging
 
 # options (v0.3): data sources for the planner
@@ -46,6 +47,7 @@ OPT_OFF_MARGIN = "off_margin_k"         # off level = living_min - this (tado sa
 OPT_START_BAND = "start_band_k"         # a planned run starts only this far below the top
 OPT_HEAT_RATE = "heat_rate_kw"          # heat per run-hour at 0 C outside (planner)
 OPT_HEAT_RATE_SLOPE = "heat_rate_slope"  # kW less per degree warmer outside
+OPT_PLANNER_MODEL = "planner_model"     # v0.11: the planner with the house model steers (else it only shows)
 OPT_NIGHT_CEILING = "night_ceiling"     # run ceiling at night (°C), 0 = off
 OPT_NIGHT_START = "night_start"         # night window start (local time)
 OPT_NIGHT_END = "night_end"             # night window end (local time)
@@ -74,6 +76,7 @@ OPTION_DEFAULTS = {
     OPT_START_BAND: 0.3,
     OPT_HEAT_RATE: 2.9,
     OPT_HEAT_RATE_SLOPE: 0.0,
+    OPT_PLANNER_MODEL: False,
     OPT_NIGHT_CEILING: 0.0,
     OPT_NIGHT_START: "23:00:00",
     OPT_NIGHT_END: "06:00:00",
