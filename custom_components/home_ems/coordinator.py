@@ -132,6 +132,7 @@ from .overview import (
     years_csv,
 )
 from .planner import QUARTER, Plan, PlannerSettings, Slot, build_slots, hour_of, plan
+from .watch import CLEAR, RAISE, DemandWatch, OutageWatch
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -167,7 +168,6 @@ STORAGE_VERSION = 1
 RUN_SOURCES = ("comfort_min", "floor", "minimum", "keep_running", "planner", "pv", "to_top")
 SAVE_DELAY = 60  # seconds
 BOOST_KEEP = timedelta(minutes=15)  # a boost older than this is not taken back after a restart
-THERMOSTAT_ALERT = timedelta(minutes=10)  # notify when the thermostat is unreachable this long
 FLAT_PRICE = 0.25  # stand-in price per kWh while the tariff is fixed (only the COP then decides)
 LATCH_GRACE = timedelta(minutes=10)  # a gap in the heat pump power this short is still a run
 DAY_JOIN = timedelta(minutes=45)  # this close to the end of the night a run gets the day top
@@ -213,8 +213,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self._surplus_samples: list[tuple[datetime, float]] = []
         self._prev_raised = 0.0
         self.run_latch = RunLatch()
-        self._thermostat_missing: datetime | None = None
-        self._thermostat_alert = False
+        self.outage_watch = OutageWatch()
+        self.demand_watch = DemandWatch()
         self._pv_hold: bool | None = None
         self.plan_status = PLAN_NO_PRICES
         self._temps: dict[datetime, float] = {}   # hour start (UTC) -> forecast temperature
@@ -441,6 +441,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         except Exception:  # curtailment and appliances must never stop the executor
             _LOGGER.exception("Could not work out curtailment and appliances")
         await self._async_execute(now)
+        self._watch_demand(now, evaluation.heat_pump_running, inputs.living_temp)
         return evaluation
 
     def _solar_hold(self, inputs: Inputs, now: datetime, s: ArbiterSettings) -> bool:
@@ -615,28 +616,45 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         return state is not None and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN)
 
     def _watch_thermostat(self, now: datetime) -> bool:
-        """True when the thermostat can be written. Unreachable for a while with control on:
-        one notification (the thermostat then holds its last setpoint by itself)."""
+        """True when the thermostat can be written now. An outage (also one that comes and
+        goes) gives one notification, which ends after 30 minutes without a break."""
+        reachable = self._thermostat_reachable()
+        event = self.outage_watch.update(reachable, now, armed=self.control)
         notification_id = f"{DOMAIN}_thermostat_unreachable"
-        if self._thermostat_reachable():
-            if self._thermostat_alert:
-                persistent_notification.async_dismiss(self.hass, notification_id)
-            self._thermostat_missing, self._thermostat_alert = None, False
-            return True
-        if self._thermostat_missing is None:
-            self._thermostat_missing = now
-        if (self.control and not self._thermostat_alert
-                and now - self._thermostat_missing >= THERMOSTAT_ALERT):
-            self._thermostat_alert = True
+        if event == RAISE:
             persistent_notification.async_create(
                 self.hass,
-                "Home EMS cannot reach the living room thermostat. The thermostat keeps its "
-                "last setpoint by itself until the connection is back. / Home EMS kan de "
-                "thermostaat in de woonkamer niet bereiken. De thermostaat houdt zelf het "
-                "laatste setpoint vast tot de verbinding terug is.",
+                "Home EMS cannot reach the living room thermostat (it may come and go). The "
+                "thermostat keeps its last setpoint by itself; Home EMS writes when it can. / "
+                "Home EMS kan de thermostaat in de woonkamer niet bereiken (hij kan komen en "
+                "gaan). De thermostaat houdt zelf het laatste setpoint vast; Home EMS schrijft "
+                "zodra het kan.",
                 title="Home EMS: thermostat unreachable / thermostaat onbereikbaar",
                 notification_id=notification_id)
-        return False
+        elif event == CLEAR:
+            persistent_notification.async_dismiss(self.hass, notification_id)
+        return reachable
+
+    def _watch_demand(self, now: datetime, running: bool | None, living: float | None) -> None:
+        """The thermostat asks for heat (setpoint above the room) but the heat pump does not
+        run: tado does not pass the demand on (seen on 11 Nov, one hour without heat)."""
+        current = self.current_setpoint()
+        asking = (self.control and self._thermostat_reachable() and current is not None
+                  and living is not None and current > living + 0.05)
+        event = self.demand_watch.update(asking, running, now)
+        notification_id = f"{DOMAIN}_no_heat_demand"
+        if event == RAISE:
+            persistent_notification.async_create(
+                self.hass,
+                f"The living room setpoint ({current:.1f} °C) is above the room ({living:.1f} °C) "
+                "for 30 minutes, but the heat pump does not run. tado may not pass the heat "
+                "demand on (check the tado bridge). / Het setpoint in de woonkamer staat al 30 "
+                "minuten boven de kamer, maar de warmtepomp draait niet. Mogelijk geeft tado de "
+                "warmtevraag niet door (kijk naar de tado-bridge).",
+                title="Home EMS: no heat / geen warmte",
+                notification_id=notification_id)
+        elif event == CLEAR:
+            persistent_notification.async_dismiss(self.hass, notification_id)
 
     async def _async_execute(self, now: datetime) -> None:
         target = self.target
