@@ -285,3 +285,16 @@ async def test_pause_after_a_change_by_hand_survives_a_reload(recorder_mock, has
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.runtime_data.executor.override_until == until
+
+
+async def test_planner_model_switch_is_off_by_default_and_switches_without_reload(recorder_mock, hass, entry):
+    set_house(hass)
+    await _setup(hass, entry)
+    switch = "switch.home_ems_planner_with_house_model"
+    assert hass.states.get(switch).state == "off"
+    coordinator = entry.runtime_data
+    await hass.services.async_call("switch", "turn_on", {"entity_id": switch}, blocking=True)
+    await hass.async_block_till_done()
+    assert hass.states.get(switch).state == "on"
+    assert coordinator.planner_model is True
+    assert entry.runtime_data is coordinator                  # no reload

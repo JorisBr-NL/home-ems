@@ -1,4 +1,5 @@
-"""Switches for Home EMS: the EMS itself, and control (writing the target setpoint)."""
+"""Switches for Home EMS: the EMS itself, control (writing the target setpoint) and the
+planner with the house model (v0.11.1)."""
 from __future__ import annotations
 
 from typing import Any
@@ -19,7 +20,8 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     async_add_entities([EmsEnabledSwitch(entry.runtime_data, "ems_enabled"),
-                        ControlSwitch(entry.runtime_data, "control")])
+                        ControlSwitch(entry.runtime_data, "control"),
+                        PlannerModelSwitch(entry.runtime_data, "planner_model")])
 
 
 class EmsEnabledSwitch(HomeEmsEntity, SwitchEntity, RestoreEntity):
@@ -63,3 +65,26 @@ class ControlSwitch(HomeEmsEntity, SwitchEntity, RestoreEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.coordinator.async_set_control(False)
+
+
+class PlannerModelSwitch(HomeEmsEntity, SwitchEntity, RestoreEntity):
+    """On = the planner with the house model steers; off = it only shows its plan and the
+    old planner steers. Off by default; restored after a restart. Switching takes effect at
+    once (a new plan is made), without reloading the integration."""
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self.coordinator.set_planner_model(last.state == STATE_ON, replan=False)
+
+    @property
+    def is_on(self) -> bool:
+        return self.coordinator.planner_model
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        self.coordinator.set_planner_model(True)
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        self.coordinator.set_planner_model(False)
+        await self.coordinator.async_request_refresh()

@@ -64,7 +64,6 @@ from .const import (
     OPT_PV_RUN_THRESHOLD,
     OPT_HEAT_RATE,
     OPT_HEAT_RATE_SLOPE,
-    OPT_PLANNER_MODEL,
     OPT_LIVING_MIN,
     OPT_NIGHT_CEILING,
     OPT_OFF_MARGIN,
@@ -201,6 +200,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         # arbiter in shadow mode: the setpoint it would write, and the EMS on/off switch
         self.target: Target | None = None
         self.enabled = True
+        self.planner_model = False   # v0.11.1: switch, the house model planner steers
         self._price_now: float | None = None
         self.pv_boost = PvBoost()
         # executor (v0.6): writes the target to the living room thermostat, off by default
@@ -541,7 +541,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         comfort_min = float(self.option(OPT_COMFORT_MIN))
         living_min, ceiling, night = self.limits(now)
         night_store = False
-        if self.plan is not None and self.plan.model and bool(self.option(OPT_PLANNER_MODEL)):
+        if self.plan is not None and self.plan.model and self.planner_model:
             moment = now or dt_util.now()
             current = next((r for r in self.plan.runs if r.start <= moment < r.end), None)
             if current is not None and current.reason == "store":
@@ -614,6 +614,12 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         state = self.hass.states.get(self.config_entry.data.get(CONF_LIVING_CLIMATE) or "")
         value = state.attributes.get("temperature") if state else None
         return float(value) if value is not None else None
+
+    def set_planner_model(self, on: bool, replan: bool = True) -> None:
+        """Switch: the planner with the house model steers (on) or only shows (off)."""
+        self.planner_model = on
+        if replan:
+            self.plan = None   # the next update makes a new plan with the chosen planner
 
     def set_enabled(self, enabled: bool) -> None:
         """EMS switch: off = no target, the thermostat schedule leads."""
@@ -798,7 +804,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         except Exception:  # the model planner is new: it must never take the old one down
             _LOGGER.exception("Could not make the plan with the house model")
             self.model_plan = None
-        use_model = bool(self.option(OPT_PLANNER_MODEL)) and self.model_plan is not None
+        use_model = self.planner_model and self.model_plan is not None
         self.plan = self.model_plan if use_model else budget
         self.plan_status = PLAN_OK if self._temps else PLAN_NO_TEMPERATURES
 
