@@ -149,3 +149,32 @@ def test_executor_state_roundtrip():
     again = executor.ExecutorState.from_dict(st.to_dict())
     assert (again.last_written, again.last_write, again.last_source, again.override_until,
             again.pause_status, again.before, again.retries) == (19.2, T0, "minimum", T0, "error", 18.5, 1)
+
+
+def test_anti_flap_holds_a_new_start_after_a_run_that_stopped_at_once():
+    """11 Nov evening: start (bedroom) and stop (top) took turns every minute."""
+    st, step = executor.ExecutorState(), executor.step
+    st.record_write(18.0, "idle", at(0), demand=False)
+    st.record_write(19.5, "bedroom", at(1), demand=True)
+    st.record_write(18.0, "idle", at(2), demand=False)      # stopped 1 minute after the start
+    a = step(st, 19.5, "bedroom", "t", 18.0, at(3), True, S, living=19.3)
+    assert (a.write, a.status) == (None, "waiting")
+    assert "anti-flap" in a.reason
+    # the house still gets heat when it needs it
+    assert step(st, 19.5, "minimum", "t", 18.0, at(3), True, S, living=18.5).write == 19.5
+    assert step(st, 19.5, "comfort_min", "t", 18.0, at(3), True, S, living=18.9).write == 19.5
+    # after the hold a start is written again (stops are never held)
+    assert step(st, 19.5, "bedroom", "t", 18.0, at(33), True, S, living=19.3).write == 19.5
+
+
+def test_anti_flap_leaves_a_normal_run_alone():
+    st, step = executor.ExecutorState(), executor.step
+    st.record_write(19.5, "planner", at(0), demand=True)
+    st.record_write(18.0, "idle", at(60), demand=False)     # an hour-long run
+    assert step(st, 19.2, "planner", "t", 18.0, at(65), True, S, living=19.0).write == 19.2
+
+
+def test_executor_state_roundtrip_keeps_the_run_times():
+    st = executor.ExecutorState(demand=True, last_start=at(1), last_stop=at(2))
+    again = executor.ExecutorState.from_dict(st.to_dict())
+    assert (again.demand, again.last_start, again.last_stop) == (True, at(1), at(2))

@@ -740,7 +740,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             if await self._async_write(action.write):
                 self.executor.record_write(action.write, target.source, now,
                                            steering=action.status != "fallback",
-                                           before=before)
+                                           before=before,
+                                           demand=None if living is None else action.write > living)
                 self.tracker.stats.setpoint_writes += 1
                 # the raise (solar boost, low price) carried by the setpoint now on the
                 # thermostat: when it is taken back, it comes off the setpoint again

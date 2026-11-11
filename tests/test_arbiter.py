@@ -431,3 +431,47 @@ def test_a_planned_storage_run_may_start_at_night():
     assert (t.setpoint, t.source) == (19.1, "planner")
     plain = arbiter.ArbiterSettings(living_min=18.5, run_ceiling=19.5, night=True)
     assert arbiter.target_setpoint(ev(Advice.WAIT), 18.9, True, settings=plain).source == "idle"
+
+
+def test_bedroom_call_does_not_start_a_run_the_top_stops_at_once():
+    """11 Nov evening: at night (top 19.0) with the living room at 19.3 the bedroom rule
+    started a run every other minute and the top rule stopped it the minute after."""
+    s = arbiter.ArbiterSettings(living_min=18.5, run_ceiling=19.0, night=True)
+    idle, run = ev(Advice.WAIT), ev(Advice.RUNNING, running=True)
+    t = arbiter.target_setpoint(idle, 19.3, False, settings=s, current_setpoint=18.0, bedroom_call=True)
+    assert t.source == "idle"
+    t = arbiter.target_setpoint(run, 19.3, False, settings=s, current_setpoint=19.5, bedroom_call=True)
+    assert t.source == "idle"
+    # with room to climb the bedroom still gets its short run
+    t = arbiter.target_setpoint(idle, 19.0, False, settings=s, current_setpoint=18.0, bedroom_call=True)
+    assert t.source == "bedroom"
+
+
+def test_no_rule_starts_a_run_that_another_rule_stops_a_minute_later():
+    """Every start the arbiter gives must survive its next evaluation (same inputs, the
+    heat pump now running). A new rule that breaks this makes the setpoint flip every
+    minute, as the bedroom rule did on 11 Nov."""
+    import itertools
+    conflicts = []
+    for night, bedroom, plan, surplus, price, cause in itertools.product(
+            (False, True), (False, True), (False, True), (0.0, 800.0), (None, 0.05, 0.40),
+            (None, "pv", "comfort_min")):
+        if cause == "pv" and not surplus:
+            continue
+        s = arbiter.ArbiterSettings(living_min=18.5 if night else 19.0,
+                                    run_ceiling=19.0 if night else 19.5, night=night)
+        extra = 0.5 if surplus else 0.0
+        for tenth in range(170, 215):
+            living = tenth / 10
+            a = arbiter.target_setpoint(ev(Advice.RUN if cause else Advice.WAIT, cause, surplus=surplus),
+                                        living, plan, settings=s, current_setpoint=s.living_min - 0.5,
+                                        bedroom_call=bedroom, price_now=price, pv_extra=extra)
+            if a.source not in arbiter.RUN_SOURCES_ARBITER:
+                continue
+            held = "comfort_min" if cause == "comfort_min" else None
+            b = arbiter.target_setpoint(ev(Advice.RUNNING, held, running=True, surplus=surplus),
+                                        living, plan, settings=s, current_setpoint=a.setpoint,
+                                        bedroom_call=bedroom, price_now=price, pv_extra=extra)
+            if b.source == "idle":
+                conflicts.append((a.source, b.reason, night, bedroom, plan, surplus, price, living))
+    assert conflicts == []

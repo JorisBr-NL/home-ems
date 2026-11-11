@@ -15,6 +15,10 @@ Safety rules:
   executor reports an error and pauses for `override_hold`.
 - When the EMS is switched off, or its inputs stay unavailable for `fallback_after`,
   the fallback setpoint (the normal comfort setpoint) is written once.
+- Anti-flap (v0.11.2): when a run was stopped within `short_run` of its start, no new
+  start is written for `flap_hold` after that stop, unless the house needs it (comfort
+  minimum, floor, living room minimum). A safety net for rules that would contradict
+  each other: the heat pump never starts and stops every few minutes.
 """
 from __future__ import annotations
 
@@ -22,6 +26,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 STATUSES = ["off", "steady", "writing", "waiting", "override", "fallback", "error"]
+# starts that protect the house: never held back by the anti-flap rule
+PROTECT_SOURCES = ("comfort_min", "floor", "minimum")
 
 
 @dataclass(frozen=True)
@@ -33,6 +39,8 @@ class ExecutorSettings:
     fallback_setpoint: float = 19.0
     min_step: float = 0.1                            # smallest change worth writing
     max_retries: int = 2                             # retries of a write that did not arrive
+    short_run: timedelta = timedelta(minutes=10)     # a stop this soon after a start ...
+    flap_hold: timedelta = timedelta(minutes=30)     # ... holds new starts this long
 
 
 @dataclass(frozen=True)
@@ -52,17 +60,28 @@ class ExecutorState:
     unknown_since: datetime | None = None
     before: float | None = None         # thermostat setpoint just before the last write
     retries: int = 0                    # retries of a write that did not arrive
+    demand: bool | None = None          # the last write asked for heat (setpoint above the room)
+    last_start: datetime | None = None  # last write that started the heat demand
+    last_stop: datetime | None = None   # last write that stopped it
 
     def record_write(self, setpoint: float, source: str, now: datetime,
-                     steering: bool = True, before: float | None = None) -> None:
+                     steering: bool = True, before: float | None = None,
+                     demand: bool | None = None) -> None:
         """After a successful service call. A fallback write ends steering (steering=False),
-        so later changes by hand are not taken for an override."""
+        so later changes by hand are not taken for an override. `demand`: the setpoint asks
+        for heat (above the room), None = unknown."""
         if not _same(setpoint, self.last_written):
             self.retries = 0
         self.last_written = setpoint if steering else None
         self.last_write = now
         self.last_source = source
         self.before = before
+        if demand is not None:
+            if demand and self.demand is not True:
+                self.last_start = now
+            elif not demand and self.demand is True:
+                self.last_stop = now
+            self.demand = demand
 
     def to_dict(self) -> dict:
         def iso(value: datetime | None) -> str | None:
@@ -70,7 +89,9 @@ class ExecutorState:
 
         return {"last_written": self.last_written, "last_write": iso(self.last_write),
                 "last_source": self.last_source, "override_until": iso(self.override_until),
-                "pause_status": self.pause_status, "before": self.before, "retries": self.retries}
+                "pause_status": self.pause_status, "before": self.before, "retries": self.retries,
+                "demand": self.demand, "last_start": iso(self.last_start),
+                "last_stop": iso(self.last_stop)}
 
     @classmethod
     def from_dict(cls, data: dict | None) -> ExecutorState:
@@ -81,7 +102,9 @@ class ExecutorState:
                    last_source=data.get("last_source"),
                    override_until=parse(data.get("override_until")),
                    pause_status=data.get("pause_status") or "override",
-                   before=data.get("before"), retries=int(data.get("retries") or 0))
+                   before=data.get("before"), retries=int(data.get("retries") or 0),
+                   demand=data.get("demand"), last_start=parse(data.get("last_start")),
+                   last_stop=parse(data.get("last_stop")))
 
 
 def _same(a: float | None, b: float | None) -> bool:
@@ -93,6 +116,14 @@ def action_is_retry(state: ExecutorState, current: float | None) -> bool:
     write now is a retry and the value from before stays the reference."""
     return (state.last_written is not None and state.before is not None
             and not _same(current, state.last_written) and _same(current, state.before))
+
+
+def flap_held(state: ExecutorState, now: datetime, s: ExecutorSettings) -> bool:
+    """The last run was stopped right after its start, and that stop is recent."""
+    return (state.last_start is not None and state.last_stop is not None
+            and state.last_stop >= state.last_start
+            and state.last_stop - state.last_start < s.short_run
+            and now - state.last_stop < s.flap_hold)
 
 
 def step(state: ExecutorState, target: float | None, source: str, reason: str,
@@ -157,6 +188,11 @@ def step(state: ExecutorState, target: float | None, source: str, reason: str,
         demand_changes = living is not None and (target > living) != (current > living)
         if not demand_changes:
             return Action(None, "steady", f"{source}: setpoint close enough")
+    starts = (living is not None and current is not None
+              and target > living and current <= living)
+    if starts and source not in PROTECT_SOURCES and flap_held(state, now, s):
+        return Action(None, "waiting",
+                      f"{source}: start held, the last run stopped right after its start (anti-flap)")
     caught_up = (current is not None and living is not None
                  and current <= living + 0.05 and target > living)
     if (
