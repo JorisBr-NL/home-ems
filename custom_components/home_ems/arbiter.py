@@ -321,7 +321,9 @@ def target_setpoint(evaluation: Evaluation, living_temp: float | None, plan_run_
         if running and living_temp < bedroom_top:
             return result(on(s.hold_offset, bedroom_top), "bedroom",
                           "bedroom below target before bedtime: keep the run going")
-        if not running:
+        if not running and living_temp <= bedroom_top - s.start_band + 1e-9:
+            # only with room to climb: a start the top rule stops a minute later would make
+            # the setpoint flip between start and stop every minute (v0.11.2)
             return result(on(s.start_offset, max(bedroom_top, living_temp + s.start_offset)),
                           "bedroom", "bedroom below target before bedtime: short run")
     if not running and living_temp <= s.living_min + s.min_lead + 1e-9:
