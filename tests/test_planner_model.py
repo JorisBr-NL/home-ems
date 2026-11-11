@@ -36,13 +36,19 @@ def slots(hours: int = 36, temp: float = 5.0, price=lambda h: 0.30):
                          temp=temp) for i in range(hours * 4)]
 
 
-def day_night(moment: datetime) -> tuple[float, float, float]:
-    """Like the coordinator: night 20:00-05:00, the day top in the last 2.5 h of the night."""
+def day_night(moment: datetime, night_store: float | None = None) -> tuple[float, float, float, bool]:
+    """Like the coordinator (v0.10.9): night 20:00-05:00 with the night ceiling, 19.0 in the
+    last 2.5 h, the day top in the last 45 min; storage by day to 20.0, at night to
+    `night_store` (dynamic contract) or not at all."""
     local = (moment + timedelta(hours=1)).time()        # UTC+1
     if local >= time(20, 0) or local < time(5, 0):
-        top = 19.5 if time(2, 30) <= local < time(5, 0) else 18.8
-        return 18.5, top, top
-    return 19.0, 19.5, 20.0
+        top = 18.8
+        if time(2, 30) <= local < time(5, 0):
+            top = 19.0
+        if time(4, 15) <= local < time(5, 0):
+            top = 19.5
+        return 18.5, top, max(top, night_store or top), True
+    return 19.0, 19.5, 20.0, False
 
 
 def test_house_model_cools_and_heats_like_the_house():
@@ -97,3 +103,32 @@ def test_a_run_in_progress_goes_on_first():
 def test_no_slots_or_no_room_gives_no_plan():
     assert pm.plan_with_model([], T0, 19.0, day_night, PS, MS) is None
     assert pm.plan_with_model(slots(), T0, None, day_night, PS, MS) is None
+
+
+def test_no_planned_run_at_night_with_a_fixed_tariff():
+    # night 20:00-05:00 local; the room is just above the night minimum
+    start = T0 + timedelta(hours=8)                      # 21:00 local
+    night = [planner.Slot(start + i * planner.QUARTER, 0.25, market=0.25, temp=3.0)
+             for i in range(10 * 4)]
+    p = pm.plan_with_model(night, start, 18.9, day_night, PS, MS)
+    for r in p.runs:
+        local = (r.start + timedelta(hours=1)).time()
+        if local >= time(20, 0) or local < time(5, 0):
+            # only a start at the night minimum: the predicted room is at the limit then
+            temp = dict(p.predicted)[r.start]
+            assert temp < 18.5 + 0.1, (r.start, temp)
+
+
+def test_cheap_night_hours_store_heat_with_a_dynamic_contract():
+    # 21:00 to 21:00: night 0.20 (cloudy, no wind), day 0.45
+    start = T0 + timedelta(hours=8)
+    def price(moment: datetime) -> float:
+        h = (moment + timedelta(hours=1)).hour
+        return 0.20 if (h >= 22 or h < 6) else 0.45
+    day = [planner.Slot(start + i * planner.QUARTER, price(start + i * planner.QUARTER),
+                        market=0.10, temp=3.0) for i in range(24 * 4)]
+    p = pm.plan_with_model(day, start, 18.9, lambda m: day_night(m, night_store=19.5), PS, MS)
+    stores = [r for r in p.runs if r.reason == "store"]
+    assert stores, [(r.start, r.end, r.reason) for r in p.runs]
+    assert any((r.start + timedelta(hours=1)).hour >= 22 or (r.start + timedelta(hours=1)).hour < 6
+               for r in stores)

@@ -17,6 +17,7 @@ CONF_GRID_POWER = "grid_power"
 CONF_OUTSIDE_TEMPERATURE = "outside_temperature"
 CONF_CHILL_CLIMATE = "chill_climate"
 CONF_BATTERY_POWER = "battery_power"            # battery power sensors (optional, v0.10.4)
+CONF_HEAT_OUTPUT = "heat_output"                # heat pump heat output, W (optional, v0.11: learn COP)
 CONF_BATTERY_CHARGE_POSITIVE = "battery_charge_positive"   # True: positive = charging
 
 # options (v0.3): data sources for the planner

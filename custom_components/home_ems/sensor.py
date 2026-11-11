@@ -76,12 +76,25 @@ def _model_attrs(c: HomeEmsCoordinator) -> dict[str, Any]:
     predicted living room temperature per hour."""
     m = c.model_plan
     if m is None:
-        return {"model_runs": [], "predicted": []}
+        return {"model_runs": [], "predicted": [], **_learned_attrs(c)}
     return {
         "model_runs": [{"start": _local(r.start), "end": _local(r.end), "reason": r.reason,
                         "heat_kwh": round(r.heat_kwh, 2), "cost": round(r.cost, 3)} for r in m.runs],
         "predicted": [{"start": _local(t), "temp": v} for t, v in m.predicted if t.minute == 0],
+        **_learned_attrs(c),
     }
+
+
+def _learned_attrs(c: HomeEmsCoordinator) -> dict[str, Any]:
+    """What Home EMS learned about the heat pump: per outdoor temperature (middle of a 2 C
+    bucket) the COP and the heat while running, with the hours of running behind it."""
+    out = []
+    for key in sorted(c.learner.buckets):
+        b = c.learner.buckets[key]
+        if b.hours > 0 and b.el_kwh > 0:
+            out.append({"outside": key * 2 + 1, "cop": round(b.heat_kwh / b.el_kwh, 2),
+                        "heat_kw": round(b.heat_kwh / b.hours, 2), "hours": round(b.hours, 1)})
+    return {"learned": out}
 
 
 def _target_attrs(c: HomeEmsCoordinator) -> dict[str, Any]:

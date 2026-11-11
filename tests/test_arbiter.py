@@ -423,3 +423,11 @@ def test_the_planner_starts_no_run_at_night():
     assert arbiter.target_setpoint(ev(Advice.WAIT), 18.6, True, settings=night).source == "minimum"
     run = ev(Advice.RUNNING, running=True)
     assert arbiter.target_setpoint(run, 18.8, True, settings=night, current_setpoint=18.9).source == "planner"
+
+
+def test_a_planned_storage_run_may_start_at_night():
+    store = arbiter.ArbiterSettings(living_min=18.5, run_ceiling=19.5, night=True, night_store=True)
+    t = arbiter.target_setpoint(ev(Advice.WAIT), 18.9, True, settings=store)
+    assert (t.setpoint, t.source) == (19.1, "planner")
+    plain = arbiter.ArbiterSettings(living_min=18.5, run_ceiling=19.5, night=True)
+    assert arbiter.target_setpoint(ev(Advice.WAIT), 18.9, True, settings=plain).source == "idle"

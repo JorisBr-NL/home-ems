@@ -41,7 +41,8 @@ from .planner import (
 )
 
 HOURS = QUARTER.total_seconds() / 3600
-Limits = Callable[[datetime], tuple[float, float, float]]   # lower limit, top, storage top
+# lower limit, top, storage top, night
+Limits = Callable[[datetime], tuple[float, float, float, bool]]
 
 
 @dataclass(frozen=True)
@@ -95,14 +96,15 @@ def plan_with_model(slots: list[Slot], now: datetime, room: float | None, limits
                     running: bool = False) -> Plan | None:
     """Runs from now to the end of the slots. `limits(moment)` gives the lower limit, the top
     and the storage top (comfort maximum by day, the top at night) for that moment: the same
-    limits the control uses. `running`: a run is in progress and goes on to the top first."""
+    limits the control uses), and whether it is night. `running`: a run is in progress and
+    goes on to the top first."""
     s = s or ModelSettings()
     slots = sorted((x for x in slots if x.start + QUARTER > now), key=lambda x: x.start)
     if not slots or room is None:
         return None
     sim = _Sim(HouseModel.from_planner(ps, s.reference_temp), slots, ps, s)
     costs: list[SlotCost] = [slot_cost(x, ps) for x in slots]
-    lows, tops, stores = zip(*(limits(x.start) for x in slots))
+    lows, tops, stores, nights = zip(*(limits(x.start) for x in slots))
     n = len(slots)
     min_len = max(1, math.ceil(s.min_run / QUARTER))
 
@@ -177,10 +179,17 @@ def plan_with_model(slots: list[Slot], now: datetime, room: float | None, limits
         best = None
         for start in range(i, violation + 1):
             t0, w0 = coast[start - i]
-            if start < violation and t0 > tops[start] - s.start_band + 1e-9:
-                continue   # the control would not start here: no room to climb
-            can_store = stores[start] > tops[start] + 0.05
+            can_store = (stores[start] > tops[start] + 0.05
+                         and t0 <= stores[start] - s.start_band + 1e-9)
+            # the control starts a normal run only with room to climb, and at night only at
+            # the night minimum (the violation); a storage run needs room below its own top
+            normal = start == violation or (not nights[start]
+                                            and t0 <= tops[start] - s.start_band + 1e-9)
+            if not normal and not can_store:
+                continue
             for end, t1, w1, low, store in run_variants(start, t0, w0, can_store):
+                if not store and not normal:
+                    continue
                 if low < lows[start] - 0.2:
                     continue   # starts too late: the room drops too far before the heat arrives
                 cost = sum(costs[q].cost for q in range(start, end))

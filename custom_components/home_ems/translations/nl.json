@@ -14,7 +14,8 @@
           "outside_temperature": "Buitentemperatuur",
           "chill_climate": "Quatt Chill",
           "battery_power": "Batterijvermogen (één of meer sensoren, optioneel)",
-          "battery_charge_positive": "Batterijvermogen: positief = laden"
+          "battery_charge_positive": "Batterijvermogen: positief = laden",
+          "heat_output": "Warmteafgifte warmtepomp (optioneel; leert COP en warmte per buitentemperatuur)"
         }
       },
       "reconfigure": {
@@ -30,7 +31,8 @@
           "outside_temperature": "Buitentemperatuur",
           "chill_climate": "Quatt Chill",
           "battery_power": "Batterijvermogen (één of meer sensoren, optioneel)",
-          "battery_charge_positive": "Batterijvermogen: positief = laden"
+          "battery_charge_positive": "Batterijvermogen: positief = laden",
+          "heat_output": "Warmteafgifte warmtepomp (optioneel; leert COP en warmte per buitentemperatuur)"
         }
       }
     },

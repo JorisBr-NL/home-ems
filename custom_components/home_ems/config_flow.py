@@ -18,6 +18,7 @@ from .const import (
     BEDROOM_OPTIONS,
     CONF_BATTERY_CHARGE_POSITIVE,
     CONF_BATTERY_POWER,
+    CONF_HEAT_OUTPUT,
     CONF_CHILL_CLIMATE,
     CONF_FLOW_RATE,
     CONF_FLOW_TEMPERATURE,
@@ -115,6 +116,9 @@ SCHEMA = vol.Schema(
         ),
         vol.Required(CONF_GRID_POWER): POWER,
         vol.Optional(CONF_OUTSIDE_TEMPERATURE): TEMPERATURE,
+        vol.Optional(CONF_HEAT_OUTPUT): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="sensor", device_class="power")
+        ),
         vol.Optional(CONF_CHILL_CLIMATE): CLIMATE,
         vol.Optional(CONF_BATTERY_POWER): selector.EntitySelector(
             selector.EntitySelectorConfig(domain="sensor", device_class="power", multiple=True)

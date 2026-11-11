@@ -30,6 +30,10 @@ class PlannerSettings:
     heat_rate_kw: float = 2.9
     heat_rate_slope: float = 0.0
     heat_rate_min: float = 1.0
+    # v0.11: learned from the measurements (outdoor temperature, value), coldest first;
+    # when given they replace the formulas (between the points linear, flat beyond)
+    cop_points: tuple[tuple[float, float], ...] = ()
+    heat_points: tuple[tuple[float, float], ...] = ()
     cop_intercept: float = 3.5        # COP = intercept + slope * outdoor temp, clipped
     cop_slope: float = 0.15
     cop_min: float = 2.5
@@ -171,9 +175,21 @@ def build_slots(price_rows: list[dict], solar_hours: list[dict] | None = None,
     return slots
 
 
+def interpolate(points: tuple[tuple[float, float], ...], temp: float) -> float:
+    """Linear between the points, flat beyond the first and the last."""
+    if temp <= points[0][0]:
+        return points[0][1]
+    for (t0, v0), (t1, v1) in zip(points, points[1:]):
+        if temp <= t1:
+            return v0 + (v1 - v0) * (temp - t0) / (t1 - t0)
+    return points[-1][1]
+
+
 def cop_at(temp: float | None, s: PlannerSettings) -> float:
     if temp is None:
         temp = 8.0
+    if s.cop_points:
+        return min(s.cop_max, max(1.0, interpolate(s.cop_points, temp)))
     return min(s.cop_max, max(s.cop_min, s.cop_intercept + s.cop_slope * temp))
 
 
@@ -181,6 +197,8 @@ def heat_rate_at(temp: float | None, s: PlannerSettings) -> float:
     """Heat (kW) the heat pump delivers while it runs at this outdoor temperature."""
     if temp is None:
         temp = 8.0
+    if s.heat_points:
+        return max(s.heat_rate_min, interpolate(s.heat_points, temp))
     return max(s.heat_rate_min, s.heat_rate_kw - s.heat_rate_slope * temp)
 
 

@@ -14,7 +14,8 @@
           "outside_temperature": "Outside temperature",
           "chill_climate": "Quatt Chill",
           "battery_power": "Battery power (one or more sensors, optional)",
-          "battery_charge_positive": "Battery power: positive = charging"
+          "battery_charge_positive": "Battery power: positive = charging",
+          "heat_output": "Heat pump heat output (optional; learns COP and heat per outdoor temperature)"
         }
       },
       "reconfigure": {
@@ -30,7 +31,8 @@
           "outside_temperature": "Outside temperature",
           "chill_climate": "Quatt Chill",
           "battery_power": "Battery power (one or more sensors, optional)",
-          "battery_charge_positive": "Battery power: positive = charging"
+          "battery_charge_positive": "Battery power: positive = charging",
+          "heat_output": "Heat pump heat output (optional; learns COP and heat per outdoor temperature)"
         }
       }
     },
