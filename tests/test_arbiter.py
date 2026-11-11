@@ -410,3 +410,16 @@ def test_after_a_stop_the_after_run_is_not_taken_up_again():
     after = ev(Advice.KEEP_RUNNING, running=False, surplus=900.0)
     t = arbiter.target_setpoint(after, 19.9, False, settings=s, current_setpoint=18.5, pv_hold=True)
     assert (t.setpoint, t.source) == (18.5, "idle")
+
+
+# ---------------------------------------------------------------- v0.10.9
+
+
+def test_the_planner_starts_no_run_at_night():
+    night = arbiter.ArbiterSettings(living_min=18.5, run_ceiling=19.0, night=True)
+    t = arbiter.target_setpoint(ev(Advice.WAIT), 18.7, True, settings=night)
+    assert (t.setpoint, t.source) == (18.0, "idle") and "night" in t.reason
+    # the night minimum still starts one, and a planned run in progress is held
+    assert arbiter.target_setpoint(ev(Advice.WAIT), 18.6, True, settings=night).source == "minimum"
+    run = ev(Advice.RUNNING, running=True)
+    assert arbiter.target_setpoint(run, 18.8, True, settings=night, current_setpoint=18.9).source == "planner"

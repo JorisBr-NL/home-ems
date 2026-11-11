@@ -52,6 +52,12 @@ Home EMS bepaalt het schakelpunt; de thermostaat en de warmtepomp voeren alleen 
 
 **Zonneboost.** Tijdens een run met teruglevering gaat het gat tussen setpoint en kamer (waarop de thermostaat moduleert) om de 5 minuten 0,1 °C omhoog zolang er gemiddeld meer dan de *marge* (standaard 300 W) teruggaat, tot het *grootste gat*. Komt er gemiddeld meer dan de marge van het net, dan halveert de verhoging, en die gaat ook weer van het setpoint af. Het overschot is de teruglevering plus wat de draaiende warmtepomp en de batterijen (optioneel, onder *Opnieuw configureren*) gebruiken, nooit meer dan de PV-productie. De boost blijft bewaard bij het opslaan van de opties en bij een korte herstart.
 
+**Vast tarief.** Vul onder *Zon en prijs* bij *Dynamisch contract vanaf* de eerste dag van een contract met kwartierprijzen in. Vóór die datum doet de prijs er niet toe: er is geen prijspiek en geen boost bij een lage prijs, en de planner plant alleen op de COP (de warmste uren). Leeg = prijzen tellen mee.
+
+**Nacht.** In het nachtvenster start alleen het nachtminimum een run; de planner start er geen. In de laatste 2,5 uur van de nacht loopt een run door tot het comfortsetpoint (het niveau waarmee de dag begint), niet hoger. Een run die bij het begin van de nacht nog loopt, krijgt de nachtgrens zodra hij zijn minimale runtijd heeft gehad.
+
+**Als de thermostaat of Home Assistant wegvalt.** De thermostaat houdt dan zelf zijn laatste setpoint vast. Stond dat op het uit-niveau, dan stookt hij alleen als vangnet; liep er net een run, dan regelt hij zelf op dat setpoint tot de verbinding terug is. Is de thermostaat langer dan 10 minuten onbereikbaar terwijl de sturing aan staat, dan zet Home EMS een melding in Home Assistant en schrijft het niets tot hij terug is; daarna schrijft het meteen het gewenste setpoint.
+
 **Lage prijs.** Op of onder de lage prijs (all-in, standaard € 0,20/kWh, 0 = uit) is het gat meteen het grootste gat en is de bovengrens het comfortmaximum (niet in het nachtvenster).
 
 | Entiteit | Betekenis |

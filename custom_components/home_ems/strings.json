@@ -244,14 +244,16 @@
               "boost_margin_w": "Solar boost margin",
               "gap_max_k": "Largest gap setpoint − room",
               "low_price_eur": "Low price",
-              "expensive_share_pct": "Price peak"
+              "expensive_share_pct": "Price peak",
+              "dynamic_from": "Dynamic contract from"
             },
             "data_description": {
               "pv_run_threshold_w": "A run starts on solar when the 5-minute average surplus is at least this and the forecast for the coming hour still gives a surplus.",
               "boost_margin_w": "During a run the gap goes up 0.1 per 5 minutes while the average export is above this, and halves when the average import is above it. 0 = off.",
               "gap_max_k": "Largest gap on solar or at a low price. A larger gap lets the heat pump run harder.",
               "low_price_eur": "At or below this all-in price per kWh the gap is the largest and the top is the comfort maximum. 0 = off.",
-              "expensive_share_pct": "The most expensive share of the quarters of the day counts as a price peak: the advice starts no run there (the minimums still do), and a run does not run on to the top."
+              "expensive_share_pct": "The most expensive share of the quarters of the day counts as a price peak: the advice starts no run there (the minimums still do), and a run does not run on to the top.",
+              "dynamic_from": "First day of a contract with a price per quarter. Before this date the price does not matter (fixed tariff): no price peak, no low price boost, and the planner plans on the COP only (the warmest hours). Empty = prices count."
             }
           },
           "floor": {

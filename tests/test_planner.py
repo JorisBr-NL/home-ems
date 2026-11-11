@@ -286,3 +286,27 @@ def test_a_stronger_heat_pump_needs_fewer_run_hours():
     hours = lambda p: sum((r.end - r.start).total_seconds() for r in p.runs) / 3600
     assert hours(strong) < hours(weak)
     assert abs(sum(r.heat_kwh for r in strong.runs) - 5.0 * hours(strong)) < 1e-6
+
+
+def test_plan_on_a_clock_change_day():
+    # 28 March 2027: the clocks go forward, the local day has 92 quarters
+    tz = planner.PlannerSettings().tz
+    start = datetime(2027, 3, 28, 0, 0, tzinfo=tz).astimezone(timezone.utc)
+    slots = [planner.Slot(start + i * planner.QUARTER, 0.25, temp=4.0) for i in range(92)]
+    local_days = {s.start.astimezone(tz).date() for s in slots}
+    assert len(local_days) == 1                      # 92 quarters are the whole local day
+    p = planner.plan(slots, start)
+    assert p is not None and p.runs
+    assert all(r.end > r.start for r in p.runs) and p.horizon_end == slots[-1].start + planner.QUARTER
+
+
+def test_a_flat_price_plans_the_warmest_hours():
+    # fixed tariff: price and export value the same all day, only the COP differs
+    start = datetime(2026, 11, 10, 0, 0, tzinfo=timezone.utc)
+    slots = [planner.Slot(start + i * planner.QUARTER, 0.25, market=0.25,
+                          temp=10.0 if 48 <= i < 64 else 2.0) for i in range(96)]
+    p = planner.plan(slots, start, planner.PlannerSettings(max_gap=timedelta(hours=30)), living_temp=19.4)
+    cheapest = [r for r in p.runs if r.reason == "cheapest"]
+    assert cheapest and any(r.start <= start + timedelta(hours=12) < r.end
+                            or start + timedelta(hours=12) <= r.start < start + timedelta(hours=16)
+                            for r in cheapest)

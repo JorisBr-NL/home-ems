@@ -54,6 +54,7 @@ OPT_NIGHT_END = "night_end"             # night window end (local time)
 OPT_GAP_MAX = "gap_max_k"                # largest gap setpoint - room
 OPT_BOOST_MARGIN = "boost_margin_w"      # solar boost: step up/down beyond this export/import, 0 = off
 OPT_LOW_PRICE = "low_price_eur"          # all-in price at or below which the gap is largest
+OPT_DYNAMIC_FROM = "dynamic_from"        # first day of a dynamic contract; before it prices are ignored
 
 OPTION_DEFAULTS = {
     OPT_COMFORT_SETPOINT: 19.0,

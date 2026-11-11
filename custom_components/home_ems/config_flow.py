@@ -42,6 +42,7 @@ from .const import (
     OPT_COMFORT_MAX,
     OPT_COMFORT_MIN,
     OPT_COMFORT_SETPOINT,
+    OPT_DYNAMIC_FROM,
     OPT_COST_SETTINGS,
     OPT_EXPENSIVE_SHARE,
     OPT_EXPORT_DIR,
@@ -88,7 +89,8 @@ from .appliances import parse_appliances
 from .bedrooms import parse_rooms
 from .overview import parse_settings
 
-PLANNER_OPTIONS = (OPT_PRICE_ENTITY, OPT_SOLAR_ENTITY, OPT_WEATHER_ENTITY, OPT_GAS_ENTITY, *OPTION_DEFAULTS)
+PLANNER_OPTIONS = (OPT_PRICE_ENTITY, OPT_SOLAR_ENTITY, OPT_WEATHER_ENTITY, OPT_GAS_ENTITY,
+                   OPT_DYNAMIC_FROM, *OPTION_DEFAULTS)
 
 CLIMATE = selector.EntitySelector(selector.EntitySelectorConfig(domain="climate"))
 POWER = selector.EntitySelector(
@@ -318,6 +320,7 @@ class HomeEmsOptionsFlow(OptionsFlow):
                 number(OPT_GAP_MAX, 0.1, 2, 0.1, "K"),
                 number(OPT_LOW_PRICE, 0, 1, 0.01, "EUR/kWh"),
                 number(OPT_EXPENSIVE_SHARE, 0, 60, 5, "%"),
+                (_optional(current, OPT_DYNAMIC_FROM), selector.DateSelector()),
             ]),
             "floor": (True, [
                 number(OPT_FLOOR_RULE_BAND, 0, 3, 0.1, "K"),
