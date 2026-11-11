@@ -169,6 +169,9 @@
       },
       "control": {
         "name": "Sturing (setpoint schrijven)"
+      },
+      "planner_model": {
+        "name": "Planner met huismodel"
       }
     }
   },
@@ -277,15 +280,13 @@
               "heat_rate_kw": "Warmte per run-uur bij 0 °C buiten",
               "heat_rate_slope": "Warmte per run-uur: minder per °C warmer",
               "capacity_kwh_k": "Warmtecapaciteit van het huis",
-              "base_load_kw": "Basisverbruik van het huis",
-              "planner_model": "Planner met huismodel stuurt"
+              "base_load_kw": "Basisverbruik van het huis"
             },
             "data_description": {
               "heat_rate_kw": "Warmte die de warmtepomp levert als hij draait, bij 0 °C buiten (gemeten Quatt Duo: ongeveer 7,0 kW).",
               "heat_rate_slope": "Hoeveel minder warmte per graad warmer buiten (gemeten: ongeveer 0,4 kW per °C). 0 = bij elke temperatuur gelijk.",
               "capacity_kwh_k": "Opgeslagen warmte per graad kamertemperatuur. Een kamer boven het doel verlaagt de behoefte, eronder verhoogt hem.",
-              "base_load_kw": "Verbruik van het huis naast de warmtepomp, voor de zonverwachting.",
-              "planner_model": "De planner voorspelt de kamertemperatuur per kwartier en plant runs binnen de dag- en nachtgrenzen (start met ruimte om te klimmen, door tot de bovengrens). Uit: hij toont alleen zijn plan (attributen model_runs en predicted op Volgende geplande run) en de oude planner stuurt."
+              "base_load_kw": "Verbruik van het huis naast de warmtepomp, voor de zonverwachting."
             }
           },
           "sources": {

@@ -169,6 +169,9 @@
       },
       "control": {
         "name": "Control (write setpoint)"
+      },
+      "planner_model": {
+        "name": "Planner with house model"
       }
     }
   },
@@ -277,15 +280,13 @@
               "heat_rate_kw": "Heat per run-hour at 0 °C outside",
               "heat_rate_slope": "Heat per run-hour: less per °C warmer",
               "capacity_kwh_k": "Heat capacity of the house",
-              "base_load_kw": "Base load of the house",
-              "planner_model": "Planner with house model steers"
+              "base_load_kw": "Base load of the house"
             },
             "data_description": {
               "heat_rate_kw": "Heat the heat pump delivers while it runs, at 0 °C outside (measured Quatt Duo: about 7.0 kW).",
               "heat_rate_slope": "How much less heat per degree warmer outside (measured: about 0.4 kW per °C). 0 = the same at every temperature.",
               "capacity_kwh_k": "Heat stored per degree room temperature. A room above the target lowers the need, a room below it raises it.",
-              "base_load_kw": "Use of the house besides the heat pump, for the solar forecast.",
-              "planner_model": "The planner predicts the room temperature per quarter and plans runs within the day and night limits (start with room to climb, on to the top). Off: it only shows its plan (attributes model_runs and predicted on Next planned run) and the old planner steers."
+              "base_load_kw": "Use of the house besides the heat pump, for the solar forecast."
             }
           },
           "sources": {
