@@ -243,8 +243,9 @@ async def test_unreachable_thermostat_gives_a_notification_and_no_writes(recorde
     written = len(calls)
     hass.states.async_set(LIVING, "unavailable")
     await _refresh(hass, entry)
-    freezer.tick(timedelta(minutes=11))
-    await _refresh(hass, entry)
+    for _ in range(3):                                        # Home EMS updates every minute;
+        freezer.tick(timedelta(minutes=5))                    # longer gaps count as 5 min
+        await _refresh(hass, entry)
     assert len(calls) == written                              # nothing written into it
     assert hass.states.get(STATUS).state == "error"
     assert entry.runtime_data.outage_watch.alert is True
