@@ -243,14 +243,34 @@ async def test_unreachable_thermostat_gives_a_notification_and_no_writes(recorde
     written = len(calls)
     hass.states.async_set(LIVING, "unavailable")
     await _refresh(hass, entry)
-    freezer.tick(timedelta(minutes=11))
-    await _refresh(hass, entry)
+    for _ in range(3):                                        # Home EMS updates every minute;
+        freezer.tick(timedelta(minutes=5))                    # longer gaps count as 5 min
+        await _refresh(hass, entry)
     assert len(calls) == written                              # nothing written into it
     assert hass.states.get(STATUS).state == "error"
-    assert entry.runtime_data._thermostat_alert is True
+    assert entry.runtime_data.outage_watch.alert is True
     set_house(hass, setpoint=21.0)                            # back, with another setpoint
     await _refresh(hass, entry)
-    assert entry.runtime_data._thermostat_alert is False
+    assert entry.runtime_data.outage_watch.alert is True      # not over after a moment
+    freezer.tick(timedelta(minutes=31))
+    await _refresh(hass, entry)
+    assert entry.runtime_data.outage_watch.alert is False
+
+
+async def test_no_heat_while_the_thermostat_asks_gives_a_notification(recorder_mock, hass, entry, freezer):
+    set_house(hass, room=18.3, setpoint=18.8, hp_w=5.0, flow=25.0)
+    async_mock_service(hass, "climate", "set_temperature")
+    await _setup(hass, entry)
+    await hass.services.async_call("switch", "turn_on", {"entity_id": CONTROL}, blocking=True)
+    await hass.async_block_till_done()
+    for _ in range(7):
+        freezer.tick(timedelta(minutes=5))
+        set_house(hass, room=18.3, setpoint=18.8, hp_w=5.0, flow=25.0)
+        await _refresh(hass, entry)
+    assert entry.runtime_data.demand_watch.alert is True
+    set_house(hass, room=18.3, setpoint=18.8, hp_w=900.0, flow=25.0)   # the heat pump starts
+    await _refresh(hass, entry)
+    assert entry.runtime_data.demand_watch.alert is False
 
 
 async def test_pause_after_a_change_by_hand_survives_a_reload(recorder_mock, hass, entry):
