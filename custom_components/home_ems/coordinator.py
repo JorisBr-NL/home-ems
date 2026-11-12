@@ -116,6 +116,7 @@ from .model import (
     Inputs,
     RunTracker,
     Settings,
+    average_power,
     average_surplus,
     confirm_pv_start,
     evaluate,
@@ -215,6 +216,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self.appliance_advice: list[StartAdvice] = []
         self._slots: list[Slot] = []
         self._surplus_samples: list[tuple[datetime, float]] = []
+        self._pv_samples: list[tuple[datetime, float]] = []   # solar power, for the hold
         self._prev_raised = 0.0
         self.run_latch = RunLatch()
         self.learner = HeatPumpLearner()
@@ -418,9 +420,14 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             self._surplus_samples.append((now, evaluation.pv_surplus_w))
         self._surplus_samples = [(t, v) for t, v in self._surplus_samples
                                  if now - t <= PV_START_WINDOW]
+        if inputs.pv_power_w is not None:
+            self._pv_samples.append((now, inputs.pv_power_w))
+        self._pv_samples = [(t, v) for t, v in self._pv_samples if now - t <= PV_START_WINDOW]
+        last_end = self.tracker.last_run_end
         evaluation = confirm_pv_start(
             evaluation, average_surplus(self._surplus_samples, now),
-            settings.pv_run_threshold_w, self._pv_forecast_ok(now))
+            settings.pv_run_threshold_w, self._pv_forecast_ok(now),
+            since_run_end=now - last_end if last_end is not None else None)
         self._store.async_delay_save(self._stored, SAVE_DELAY)
         if self.plan is None or now - self.plan.made >= REPLAN_INTERVAL:
             try:
@@ -466,9 +473,15 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         threshold = max(s.boost_margin_w, float(self.option(OPT_PV_RUN_THRESHOLD)) / 2)
         if average_surplus(self._surplus_samples, now) < threshold:
             return False
-        if inputs.pv_power_w is not None:
+        # the solar power over the same five minutes, not this minute's reading: a passing
+        # cloud stopped a run on solar at the top, and the sun back minutes later started
+        # it again (12 Nov 2026)
+        pv = average_power(self._pv_samples, now)
+        if pv is None:
+            pv = inputs.pv_power_w
+        if pv is not None:
             base = float(self.option(OPT_BASE_LOAD)) * 1000
-            return inputs.pv_power_w >= base + threshold
+            return pv >= base + threshold
         return True
 
     # ------------------------------------------------------------ arbiter (shadow mode)

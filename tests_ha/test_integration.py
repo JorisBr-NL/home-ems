@@ -298,3 +298,36 @@ async def test_planner_model_switch_is_off_by_default_and_switches_without_reloa
     assert hass.states.get(switch).state == "on"
     assert coordinator.planner_model is True
     assert entry.runtime_data is coordinator                  # no reload
+
+
+async def test_a_passing_cloud_does_not_stop_a_solar_run_and_no_solar_restart_right_after(
+        recorder_mock, hass, freezer):
+    """12 Nov 2026: a cloud stopped a run on solar at the top, and the sun back minutes
+    later started it again for three minutes."""
+    freezer.move_to("2027-05-01T10:00:00+00:00")
+    entry = MockConfigEntry(domain=DOMAIN, title="Home EMS", data=DATA, unique_id=DOMAIN,
+                            options={**NO_NIGHT, "pv_power_entities": ["sensor.inverter"]})
+
+    async def minute(room: float, hp_w: float, grid_w: float, pv_w: float, n: int = 1) -> str:
+        for _ in range(n):
+            freezer.tick(timedelta(minutes=1))
+            set_house(hass, room=room, setpoint=room + 0.1, flow=21.0, hp_w=hp_w, grid_w=grid_w)
+            hass.states.async_set("sensor.inverter", str(pv_w))
+            await _refresh(hass, entry)
+        return entry.runtime_data.target.source
+
+    set_house(hass, room=19.5, setpoint=18.5, flow=21.0, hp_w=5.0, grid_w=-3000.0)
+    hass.states.async_set("sensor.inverter", "4500")
+    await _setup(hass, entry)
+    # a steady surplus starts a run on solar (the room is at the day top, 19.5)
+    assert await minute(19.5, 5.0, -3000.0, 4500.0, n=6) == "pv"
+    # the heat pump runs on solar: it goes on past the top
+    assert await minute(19.5, 1500.0, -1500.0, 4500.0, n=3) == "pv"
+    # a cloud for a minute: the five-minute solar power still holds the run
+    assert await minute(19.5, 1500.0, 900.0, 300.0) == "pv"
+    # the run ends (heat pump off); the sun is back with a large export
+    await minute(19.6, 5.0, -3000.0, 4500.0, n=15)
+    assert entry.runtime_data.target.source != "pv"           # no solar start yet
+    assert "just ended" in entry.runtime_data.data.reason
+    # half an hour after the run ended a run on solar may start again
+    assert await minute(19.6, 5.0, -3000.0, 4500.0, n=16) == "pv"
