@@ -307,7 +307,10 @@ async def test_a_passing_cloud_does_not_stop_a_solar_run_and_no_solar_restart_ri
     later started it again for three minutes."""
     freezer.move_to("2027-05-01T10:00:00+00:00")
     entry = MockConfigEntry(domain=DOMAIN, title="Home EMS", data=DATA, unique_id=DOMAIN,
-                            options={**NO_NIGHT, "pv_power_entities": ["sensor.inverter"]})
+                            # no minimum run time: within it "keep_running" holds every run,
+                            # and the test is about what holds a run on solar
+                            options={**NO_NIGHT, "pv_power_entities": ["sensor.inverter"],
+                                     "min_run_minutes": 0})
 
     async def minute(room: float, hp_w: float, grid_w: float, pv_w: float, n: int = 1) -> str:
         for _ in range(n):
@@ -368,12 +371,13 @@ async def test_battery_reserve_charges_at_the_start_level_and_stops_at_the_stop_
     async def record(call):
         log.append((call.domain, call.service, dict(call.data)))
 
-    for domain, service in (("switch", "turn_on"), ("switch", "turn_off"),
-                            ("number", "set_value"), ("select", "select_option")):
-        hass.services.async_register(domain, service, record)
     set_house(hass)
     set_battery(hass, 30)
     await _setup(hass, entry)
+    # after the setup: the switch platform registers switch.turn_on/off itself
+    for domain, service in (("switch", "turn_on"), ("switch", "turn_off"),
+                            ("number", "set_value"), ("select", "select_option")):
+        hass.services.async_register(domain, service, record)
     assert hass.states.get(RESERVE_SWITCH).state == "off"
     assert log == []
 
@@ -428,12 +432,12 @@ async def test_battery_reserve_stops_when_the_grid_meter_goes_silent(recorder_mo
     async def record(call):
         log.append((call.domain, call.service))
 
-    for domain, service in (("switch", "turn_on"), ("switch", "turn_off"),
-                            ("number", "set_value"), ("select", "select_option")):
-        hass.services.async_register(domain, service, record)
     set_house(hass)
     set_battery(hass, 15, grid="unavailable")
     await _setup(hass, entry)
+    for domain, service in (("switch", "turn_on"), ("switch", "turn_off"),
+                            ("number", "set_value"), ("select", "select_option")):
+        hass.services.async_register(domain, service, record)
     # switch.turn_on is replaced by the recorder above, so switch the guard on directly
     await entry.runtime_data.async_set_reserve(True)
     await hass.async_block_till_done()
