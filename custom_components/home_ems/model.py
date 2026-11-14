@@ -370,13 +370,34 @@ def average_surplus(samples: list[tuple[datetime, float]], now: datetime,
     return sum(v for _, v in recent) / len(recent)
 
 
+def average_power(samples: list[tuple[datetime, float]], now: datetime,
+                  window: timedelta = PV_START_WINDOW) -> float | None:
+    """Plain average (W) of the readings within the window, None without readings. Unlike
+    `average_surplus` it does not wait for a full window: it smooths, it does not gate."""
+    recent = [v for t, v in samples if now - t <= window]
+    return sum(recent) / len(recent) if recent else None
+
+
+# After a run ends, no run on solar starts for this long. On a day with passing clouds a
+# run that stopped at the top would otherwise start again on solar minutes later (the
+# 5-minute average still holds the sun from before the cloud) and stop again (12 Nov 2026).
+PV_RESTART_PAUSE = timedelta(minutes=30)
+
+
 def confirm_pv_start(evaluation: Evaluation, avg_surplus_w: float, threshold_w: float,
-                     forecast_ok: bool) -> Evaluation:
+                     forecast_ok: bool, since_run_end: timedelta | None = None,
+                     pause: timedelta = PV_RESTART_PAUSE) -> Evaluation:
     """A run on solar only starts on the 5-minute average surplus and when the forecast for
     the coming hour also gives a surplus. A short burst of sun between clouds would
-    otherwise start a run that then goes on for the minimum run time on grid power."""
+    otherwise start a run that then goes on for the minimum run time on grid power.
+    `since_run_end`: time since the last run ended (None = unknown); within `pause` of it
+    no run on solar starts."""
     if evaluation.advice != Advice.RUN or evaluation.cause != "pv":
         return evaluation
+    if since_run_end is not None and timedelta(0) <= since_run_end < pause:
+        minutes = int(pause.total_seconds() // 60)
+        return replace(evaluation, advice=Advice.WAIT, cause=None,
+                       reason=f"a run just ended: no new run on solar within {minutes} minutes")
     if avg_surplus_w < threshold_w:
         return replace(evaluation, advice=Advice.WAIT, cause=None,
                        reason="solar surplus not steady yet (5-minute average below the threshold)")

@@ -360,3 +360,24 @@ def test_floor_rule_is_relative_to_the_minimum_and_off_at_night():
     day = model.Settings(floor_reference=18.5, floor_enabled=True, floor_rule_band=0.2)
     assert evaluate(cold_floor, RunTracker(), at(2), day).cause is None      # 18.7 >= 18.5 + 0.2
     assert evaluate(_r(cold_floor, living_temp=18.6), RunTracker(), at(2), day).cause == "floor"
+
+
+def test_no_solar_start_right_after_a_run_ended():
+    from datetime import datetime, timedelta, timezone
+    run = model.Evaluation(advice=model.Advice.RUN, reason="PV surplus available",
+                           heat_pump_running=False, floor_margin=None, pv_surplus_w=2000.0,
+                           in_peak=False, cause="pv")
+    held = model.confirm_pv_start(run, 2000.0, 700, True, since_run_end=timedelta(minutes=5))
+    assert (held.advice, held.cause) == (model.Advice.WAIT, None) and "just ended" in held.reason
+    assert model.confirm_pv_start(run, 2000.0, 700, True, since_run_end=timedelta(minutes=30)) is run
+    assert model.confirm_pv_start(run, 2000.0, 700, True, since_run_end=None) is run
+    # the pause is only for solar starts
+    floor = model.Evaluation(advice=model.Advice.RUN, reason="x", heat_pump_running=False,
+                             floor_margin=-0.5, pv_surplus_w=0.0, in_peak=False, cause="floor")
+    assert model.confirm_pv_start(floor, 0.0, 700, True, since_run_end=timedelta(0)) is floor
+    # the plain five-minute average smooths a passing cloud, also without a full window
+    now = datetime(2026, 11, 12, 10, 50, tzinfo=timezone.utc)
+    pv = [(now - timedelta(minutes=m), w) for m, w in ((4, 4500.0), (3, 4500.0), (2, 4500.0), (1, 4500.0), (0, 300.0))]
+    assert model.average_power(pv, now) == 3660.0
+    assert model.average_power([(now, 300.0)], now) == 300.0
+    assert model.average_power([], now) is None
