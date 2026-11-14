@@ -115,6 +115,25 @@ De slaapkamers worden nog niet geschreven; de sturing (v0.6) schrijft alleen de 
 
 `sensor.home_ems_best_appliance_start`: beste starttijd van het eerste apparaat; attribuut `appliances` met per apparaat `start`, `end`, `deadline`, `cost`, `cost_now` (direct starten), `saving` en `pv_share`. De stekker wordt nog niet geschakeld.
 
+### Batterijreserve (v0.12)
+
+Sommige thuisbatterijen voeden hun **backup-stopcontact uit de batterij zelf**, ook als er netstroom is. Hangt daar Home Assistant of het netwerk aan, dan loopt de batterij langzaam leeg zodra zijn ontlaadgrens het gewone ontladen stopt. Bij de harde ondergrens schakelt hij uit, en het stopcontact gaat mee. De batterijreserve laadt zo'n batterij **van het net bij** voor het zover is.
+
+- **Start** als de laadtoestand op of onder het startniveau staat (standaard 15%) en de netmeter al minstens een minuut waarden geeft. Zonder net valt er niets te laden.
+- **Stop** bij het stopniveau (standaard 24%), als de netmeter geen waarden meer geeft, als de schakelaar uit gaat, of na 3 uur laden zonder resultaat. Dat laatste geldt als storing: dan een uur geen nieuwe start.
+- **Anti-flap:** na een stop minstens 15 minuten geen nieuwe start. De band tussen start en stop is de hysterese.
+- **Laden:** externe sturing aan (bijvoorbeeld de RS485-modus), laadvermogen (standaard 1000 W; een batterij laadt rond 500–1500 W het zuinigst), *laden tot* het stopniveau (de batterij stopt dan zelf, ook zonder Home Assistant), geforceerde modus *charge*. Alleen wat nog niet goed staat wordt geschreven; staat de batterij tijdens het laden ineens anders, dan zet Home EMS hem terug.
+- **Stoppen:** geforceerde modus *standby* en daarna externe sturing uit, zodat de batterij terug gaat naar zijn eigen werkmodus.
+- **Vasthouden:** getallen die tijdens het laden op 0 gaan en daarna terug naar hun oude waarde. Bijvoorbeeld het maximale ontlaadvermogen van een tweede batterij, anders ontlaadt die in deze batterij.
+- Een lading die bezig is, blijft bewaard over een herstart, zodat Home EMS hem afmaakt of netjes stopt.
+
+| Entiteit | Betekenis |
+|---|---|
+| `switch.home_ems_battery_reserve` | batterijreserve aan of uit (standaard **uit**) |
+| `sensor.home_ems_battery_reserve_status` | `off`, `not_configured`, `idle` (boven het startniveau), `waiting`, `charging` of `error`; attributen `reason`, `start_soc`, `stop_soc`, `charge_power_w`, `charging`, `since`, `stopped_at` |
+
+Instellingen onder *Configureren → Batterijreserve*: de laadtoestandsensor, de schakelaar voor externe sturing, de keuzelijst voor de geforceerde modus en de opties die laden en stoppen (standaard `charge` en `standby`), het getal voor het laadvermogen, optioneel het getal voor *laden tot*, de sensoren van de netmeter, de getallen om vast te houden, de start- en stopniveaus en het laadvermogen.
+
 ### Sturing (v0.6)
 
 Met de schakelaar `switch.home_ems_control` (*Sturing (setpoint schrijven)*, standaard **uit**) schrijft Home EMS het gewenste setpoint naar de thermostaat in de woonkamer (`climate.set_temperature`).

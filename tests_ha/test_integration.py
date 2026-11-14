@@ -118,7 +118,8 @@ async def test_options_menu_has_control_and_keeps_other_screens(recorder_mock, h
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] is FlowResultType.MENU
-    assert result["menu_options"] == ["planner", "control", "bedrooms", "pv_appliances", "overview"]
+    assert result["menu_options"] == ["planner", "control", "bedrooms", "pv_appliances",
+                                     "battery_reserve", "overview"]
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "control"})
     assert result["type"] is FlowResultType.FORM and result["step_id"] == "control"
     result = await hass.config_entries.options.async_configure(
@@ -306,7 +307,10 @@ async def test_a_passing_cloud_does_not_stop_a_solar_run_and_no_solar_restart_ri
     later started it again for three minutes."""
     freezer.move_to("2027-05-01T10:00:00+00:00")
     entry = MockConfigEntry(domain=DOMAIN, title="Home EMS", data=DATA, unique_id=DOMAIN,
-                            options={**NO_NIGHT, "pv_power_entities": ["sensor.inverter"]})
+                            # no minimum run time: within it "keep_running" holds every run,
+                            # and the test is about what holds a run on solar
+                            options={**NO_NIGHT, "pv_power_entities": ["sensor.inverter"],
+                                     "min_run_minutes": 0})
 
     async def minute(room: float, hp_w: float, grid_w: float, pv_w: float, n: int = 1) -> str:
         for _ in range(n):
@@ -331,3 +335,126 @@ async def test_a_passing_cloud_does_not_stop_a_solar_run_and_no_solar_restart_ri
     assert "just ended" in entry.runtime_data.data.reason
     # half an hour after the run ended a run on solar may start again
     assert await minute(19.6, 5.0, -3000.0, 4500.0, n=16) == "pv"
+
+
+RESERVE = {
+    "reserve_soc_entity": "sensor.backup_battery_soc",
+    "reserve_external_control": "switch.backup_battery_external_control",
+    "reserve_force_mode": "select.backup_battery_forced_mode",
+    "reserve_charge_power_entity": "number.backup_battery_charge_power",
+    "reserve_charge_to_entity": "number.backup_battery_charge_to",
+    "reserve_grid_sensors": ["sensor.grid_phase_1", "sensor.grid_phase_2"],
+    "reserve_hold_entities": ["number.other_battery_max_discharge"],
+}
+RESERVE_SWITCH = "switch.home_ems_battery_reserve"
+RESERVE_STATUS = "sensor.home_ems_battery_reserve_status"
+
+
+def set_battery(hass, soc, *, external="off", mode="standby", grid="230"):
+    hass.states.async_set("sensor.backup_battery_soc", str(soc))
+    hass.states.async_set("switch.backup_battery_external_control", external)
+    hass.states.async_set("select.backup_battery_forced_mode", mode)
+    hass.states.async_set("number.backup_battery_charge_power", "0")
+    hass.states.async_set("number.backup_battery_charge_to", "100")
+    hass.states.async_set("number.other_battery_max_discharge", "800")
+    for phase in ("sensor.grid_phase_1", "sensor.grid_phase_2"):
+        hass.states.async_set(phase, grid)
+
+
+async def test_battery_reserve_charges_at_the_start_level_and_stops_at_the_stop_level(
+        recorder_mock, hass, freezer):
+    freezer.move_to("2026-11-14T03:00:00+00:00")
+    entry = MockConfigEntry(domain=DOMAIN, title="Home EMS", data=DATA, unique_id=DOMAIN,
+                            options={**NO_NIGHT, **RESERVE})
+    log: list[tuple[str, str, dict]] = []
+
+    async def record(call):
+        log.append((call.domain, call.service, dict(call.data)))
+
+    set_house(hass)
+    set_battery(hass, 30)
+    await _setup(hass, entry)
+    # after the setup: the switch platform registers switch.turn_on/off itself
+    for domain, service in (("switch", "turn_on"), ("switch", "turn_off"),
+                            ("number", "set_value"), ("select", "select_option")):
+        hass.services.async_register(domain, service, record)
+    assert hass.states.get(RESERVE_SWITCH).state == "off"
+    assert log == []
+
+    # switch.turn_on is replaced by the recorder above, so switch the guard on directly
+    await entry.runtime_data.async_set_reserve(True)
+    await hass.async_block_till_done()
+    assert hass.states.get(RESERVE_SWITCH).state == "on"
+    assert hass.states.get(RESERVE_STATUS).state == "idle"
+    log.clear()
+
+    # at the start level, the grid meter reporting for over a minute: charge
+    freezer.tick(timedelta(minutes=2))
+    set_battery(hass, 15)
+    await _refresh(hass, entry)
+    assert hass.states.get(RESERVE_STATUS).state == "charging"
+    assert log == [
+        ("number", "set_value", {"entity_id": "number.other_battery_max_discharge", "value": 0}),
+        ("switch", "turn_on", {"entity_id": "switch.backup_battery_external_control"}),
+        ("number", "set_value", {"entity_id": "number.backup_battery_charge_power", "value": 1000.0}),
+        ("number", "set_value", {"entity_id": "number.backup_battery_charge_to", "value": 24.0}),
+        ("select", "select_option", {"entity_id": "select.backup_battery_forced_mode", "option": "charge"}),
+    ]
+    log.clear()
+
+    # charging and everything as asked: nothing written
+    freezer.tick(timedelta(minutes=1))
+    set_battery(hass, 18, external="on", mode="charge")
+    hass.states.async_set("number.backup_battery_charge_power", "1000")
+    hass.states.async_set("number.backup_battery_charge_to", "24")
+    hass.states.async_set("number.other_battery_max_discharge", "0")
+    await _refresh(hass, entry)
+    assert log == []
+
+    # at the stop level: standby, own control, the other battery back to 800 W
+    freezer.tick(timedelta(minutes=30))
+    hass.states.async_set("sensor.backup_battery_soc", "24")
+    await _refresh(hass, entry)
+    assert hass.states.get(RESERVE_STATUS).state == "idle"
+    assert log == [
+        ("select", "select_option", {"entity_id": "select.backup_battery_forced_mode", "option": "standby"}),
+        ("switch", "turn_off", {"entity_id": "switch.backup_battery_external_control"}),
+        ("number", "set_value", {"entity_id": "number.other_battery_max_discharge", "value": 800.0}),
+    ]
+
+
+async def test_battery_reserve_stops_when_the_grid_meter_goes_silent(recorder_mock, hass, freezer):
+    freezer.move_to("2026-11-14T03:00:00+00:00")
+    entry = MockConfigEntry(domain=DOMAIN, title="Home EMS", data=DATA, unique_id=DOMAIN,
+                            options={**NO_NIGHT, **RESERVE})
+    log: list[tuple[str, str]] = []
+
+    async def record(call):
+        log.append((call.domain, call.service))
+
+    set_house(hass)
+    set_battery(hass, 15, grid="unavailable")
+    await _setup(hass, entry)
+    for domain, service in (("switch", "turn_on"), ("switch", "turn_off"),
+                            ("number", "set_value"), ("select", "select_option")):
+        hass.services.async_register(domain, service, record)
+    # switch.turn_on is replaced by the recorder above, so switch the guard on directly
+    await entry.runtime_data.async_set_reserve(True)
+    await hass.async_block_till_done()
+    assert hass.states.get(RESERVE_SWITCH).state == "on"
+    # no grid values: no charge
+    assert hass.states.get(RESERVE_STATUS).state == "waiting" and log == []
+
+    set_battery(hass, 15)
+    for _ in range(2):
+        freezer.tick(timedelta(minutes=1))
+        await _refresh(hass, entry)
+    assert hass.states.get(RESERVE_STATUS).state == "charging"
+    log.clear()
+
+    freezer.tick(timedelta(minutes=1))
+    set_battery(hass, 16, external="on", mode="charge", grid="unavailable")
+    await _refresh(hass, entry)
+    assert hass.states.get(RESERVE_STATUS).state == "waiting"
+    assert log[:2] == [("select", "select_option"), ("switch", "turn_off")]
+

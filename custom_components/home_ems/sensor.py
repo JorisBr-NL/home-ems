@@ -25,6 +25,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import OVERVIEW_STATUSES, PLAN_STATUSES
 from .executor import STATUSES as CONTROL_STATUSES
+from .reserve import STATUSES as RESERVE_STATUSES
 from .coordinator import HomeEmsConfigEntry, HomeEmsCoordinator
 from .entity import HomeEmsEntity
 from .model import Advice
@@ -250,6 +251,18 @@ SENSORS: tuple[HomeEmsSensorDescription, ...] = (
         value_fn=lambda c: c.action.status if c.action else "off",
         attrs_fn=lambda c: {"reason": c.action.reason if c.action else None}
         | c.executor.to_dict(),
+    ),
+    # --- battery reserve guard (v0.12)
+    HomeEmsSensorDescription(
+        key="battery_reserve_status",
+        device_class=SensorDeviceClass.ENUM,
+        options=RESERVE_STATUSES,
+        value_fn=lambda c: c.reserve_decision.status if c.reserve_decision else "off",
+        attrs_fn=lambda c: {"reason": c.reserve_decision.reason if c.reserve_decision else None,
+                            "start_soc": c.reserve_settings().start_soc,
+                            "stop_soc": c.reserve_settings().stop_soc,
+                            "charge_power_w": c.reserve_settings().power_w}
+        | c.reserve.to_dict(),
     ),
     HomeEmsSensorDescription(
         key="setpoint_writes_today",

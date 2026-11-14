@@ -155,6 +155,33 @@ BEDROOMS_EXAMPLE = """\
 #   bedtijd: "20:00"
 """
 
+# options (v0.12): battery reserve guard (own screen). Charges a battery that feeds a
+# backup output from the grid before it runs empty; see reserve.py
+OPT_RESERVE_SOC = "reserve_soc_entity"                 # state of charge sensor (%)
+OPT_RESERVE_EXTERNAL = "reserve_external_control"      # switch: battery under external (Modbus) control
+OPT_RESERVE_FORCE_MODE = "reserve_force_mode"          # select: forced mode (standby / charge)
+OPT_RESERVE_POWER_ENTITY = "reserve_charge_power_entity"   # number: forced charge power (W)
+OPT_RESERVE_TARGET_ENTITY = "reserve_charge_to_entity"     # number: charge to state of charge (%), optional
+OPT_RESERVE_GRID = "reserve_grid_sensors"              # sensors that must report (grid meter), optional
+OPT_RESERVE_HOLD = "reserve_hold_entities"             # numbers set to 0 while charging (e.g. max discharge
+                                                       # of the other battery), restored afterwards
+OPT_RESERVE_START = "reserve_start_soc"
+OPT_RESERVE_STOP = "reserve_stop_soc"
+OPT_RESERVE_POWER = "reserve_charge_power_w"
+OPT_RESERVE_CHARGE_OPTION = "reserve_charge_option"    # option of the forced mode select that charges
+OPT_RESERVE_STANDBY_OPTION = "reserve_standby_option"  # ... and that stops
+RESERVE_DEFAULTS = {
+    OPT_RESERVE_START: 15,
+    OPT_RESERVE_STOP: 24,
+    OPT_RESERVE_POWER: 1000,
+    OPT_RESERVE_CHARGE_OPTION: "charge",
+    OPT_RESERVE_STANDBY_OPTION: "standby",
+}
+RESERVE_ENTITIES = (OPT_RESERVE_SOC, OPT_RESERVE_EXTERNAL, OPT_RESERVE_FORCE_MODE,
+                    OPT_RESERVE_POWER_ENTITY, OPT_RESERVE_TARGET_ENTITY, OPT_RESERVE_GRID,
+                    OPT_RESERVE_HOLD)
+RESERVE_OPTIONS = (*RESERVE_ENTITIES, *RESERVE_DEFAULTS)
+
 OVERVIEW_REFRESH = timedelta(hours=1)
 
 # overview status (sensor "Overview status")
