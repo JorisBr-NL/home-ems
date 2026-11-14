@@ -62,6 +62,18 @@ from .const import (
     OPT_PRICE_ENTITY,
     OPT_PV_POWER,
     OPT_PV_RUN_THRESHOLD,
+    OPT_RESERVE_CHARGE_OPTION,
+    OPT_RESERVE_EXTERNAL,
+    OPT_RESERVE_FORCE_MODE,
+    OPT_RESERVE_GRID,
+    OPT_RESERVE_HOLD,
+    OPT_RESERVE_POWER,
+    OPT_RESERVE_POWER_ENTITY,
+    OPT_RESERVE_SOC,
+    OPT_RESERVE_STANDBY_OPTION,
+    OPT_RESERVE_START,
+    OPT_RESERVE_STOP,
+    OPT_RESERVE_TARGET_ENTITY,
     OPT_HEAT_RATE,
     OPT_HEAT_RATE_SLOPE,
     OPT_LIVING_MIN,
@@ -93,6 +105,7 @@ from .const import (
     PLAN_NO_TEMPERATURES,
     PLAN_OK,
     REPLAN_INTERVAL,
+    RESERVE_DEFAULTS,
     UPDATE_INTERVAL,
     WEATHER_REFRESH,
 )
@@ -137,6 +150,9 @@ from .planner import QUARTER, Plan, PlannerSettings, Slot, build_slots, hour_of,
 from .learn import HeatPumpLearner
 from .planner_model import ModelSettings, plan_with_model
 from .watch import CLEAR, RAISE, DemandWatch, OutageWatch
+from .reserve import START as RESERVE_START, STOP as RESERVE_STOP
+from .reserve import Decision as ReserveDecision
+from .reserve import ReserveSettings, ReserveState, decide as reserve_decide, valid as reserve_valid
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -232,11 +248,16 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self.overview_status = OVERVIEW_NOT_CONFIGURED
         self._overview_made: datetime | None = None
         self.overview_skipped: list[dict[str, Any]] = []   # glitch days left out of the overview
+        # battery reserve guard (v0.12): own switch, off by default
+        self.reserve_on = False
+        self.reserve = ReserveState()
+        self.reserve_decision: ReserveDecision | None = None
 
     # ------------------------------------------------------------ settings
 
     def option(self, key: str) -> Any:
-        default = OPTION_DEFAULTS.get(key, CONTROL_DEFAULTS.get(key, BEDROOM_DEFAULTS.get(key)))
+        default = OPTION_DEFAULTS.get(key, CONTROL_DEFAULTS.get(
+            key, BEDROOM_DEFAULTS.get(key, RESERVE_DEFAULTS.get(key))))
         return self.config_entry.options.get(key, default)
 
     def fixed_tariff(self, now: datetime | None = None) -> bool:
@@ -293,6 +314,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             self._restore_boost(stored.get("boost"), now)
             self._restore_control(stored, now)
             self.learner = HeatPumpLearner.from_dict(stored.get("learned"))
+            # a charge in progress stays ours after a restart, so it is finished or stopped
+            self.reserve = ReserveState.from_dict(stored.get("reserve"))
 
     def _stored(self) -> dict[str, Any]:
         """Run state for the store, plus the solar boost and the raise on the thermostat,
@@ -301,7 +324,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             "extra": self.pv_boost.extra, "raised": self._prev_raised,
             "at": dt_util.now().isoformat()},
             "executor": self.executor.to_dict(), "latch": self.run_latch.to_dict(),
-            "learned": self.learner.to_dict()}
+            "learned": self.learner.to_dict(), "reserve": self.reserve.to_dict()}
 
     def _restore_boost(self, data: dict | None, now: datetime) -> None:
         """Take the boost back after a reload or a short restart (at most BOOST_KEEP old)."""
@@ -460,6 +483,10 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         except Exception:  # curtailment and appliances must never stop the executor
             _LOGGER.exception("Could not work out curtailment and appliances")
         await self._async_execute(now)
+        try:
+            await self._async_reserve(now)
+        except Exception:  # the reserve guard must never stop the rest of the EMS
+            _LOGGER.exception("Could not run the battery reserve guard")
         self._watch_demand(now, evaluation.heat_pump_running, inputs.living_temp)
         self._learn(now, evaluation.heat_pump_running, inputs.heat_pump_power_w)
         return evaluation
@@ -790,6 +817,129 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             self.executor.pause_status = "override"
             self.executor.retries = 0
             self.action = Action(None, "off", "control switched off")
+        self.async_update_listeners()
+
+    # ------------------------------------------------------------ battery reserve (v0.12)
+
+    def reserve_settings(self) -> ReserveSettings:
+        return ReserveSettings(start_soc=float(self.option(OPT_RESERVE_START)),
+                               stop_soc=float(self.option(OPT_RESERVE_STOP)),
+                               power_w=float(self.option(OPT_RESERVE_POWER)))
+
+    def _entities(self, key: str) -> list[str]:
+        value = self.option(key) or []
+        return [value] if isinstance(value, str) else list(value)
+
+    def reserve_configured(self) -> bool:
+        return all(self.option(k) for k in (OPT_RESERVE_SOC, OPT_RESERVE_EXTERNAL,
+                                             OPT_RESERVE_FORCE_MODE, OPT_RESERVE_POWER_ENTITY))
+
+    def _grid_reports(self) -> bool:
+        """The grid meter gives values: every configured sensor (the grid power sensor if
+        none) has a number. Without a grid there is nothing to charge from."""
+        entities = self._entities(OPT_RESERVE_GRID) or [self.config_entry.data.get(CONF_GRID_POWER)]
+        return all(self._float_state(e) is not None for e in entities)
+
+    async def _async_reserve(self, now: datetime) -> None:
+        if not self.reserve_configured():
+            self.reserve_decision = ReserveDecision(None, "not_configured",
+                                                    "set the battery entities in the options")
+            return
+        s = self.reserve_settings()
+        if not reserve_valid(s):
+            self.reserve_decision = ReserveDecision(
+                None, "error", "the stop level must be at least 2% above the start level")
+            return
+        soc = self._float_state(self.option(OPT_RESERVE_SOC))
+        decision = reserve_decide(self.reserve, self.reserve_on, soc, self._grid_reports(), now, s)
+        if decision.action == RESERVE_START:
+            restore = {e: v for e in self._entities(OPT_RESERVE_HOLD)
+                       if (v := self._float_state(e)) is not None}
+            if await self._async_reserve_charge(s, restore):
+                self.reserve.record_start(now, restore)
+                _LOGGER.info("Battery reserve: %s", decision.reason)
+            else:
+                await self._async_reserve_release(restore)
+                self.reserve.record_stop(now, fault=True, s=s)
+                decision = ReserveDecision(None, "error", "could not start the charge: see the log")
+        elif decision.action == RESERVE_STOP:
+            ok = await self._async_reserve_release(dict(self.reserve.restore))
+            self.reserve.record_stop(now, fault=decision.status == "error" or not ok, s=s)
+            _LOGGER.info("Battery reserve: %s", decision.reason)
+            if not ok:
+                decision = ReserveDecision(None, "error",
+                                           "could not stop the charge cleanly: see the log")
+        elif decision.status == "charging":
+            # keep the battery charging (for example after it restarted by itself)
+            await self._async_reserve_charge(s, self.reserve.restore)
+        self.reserve_decision = decision
+        self._store.async_delay_save(self._stored, SAVE_DELAY)
+
+    async def _async_call(self, domain: str, service: str, data: dict[str, Any]) -> bool:
+        try:
+            await self.hass.services.async_call(domain, service, data, blocking=True)
+        except HomeAssistantError as err:
+            _LOGGER.warning("Battery reserve: %s.%s %s failed: %s", domain, service, data, err)
+            return False
+        return True
+
+    def _state_is(self, entity_id: str, value: str) -> bool:
+        state = self.hass.states.get(entity_id)
+        return state is not None and state.state == value
+
+    def _number_is(self, entity_id: str, value: float) -> bool:
+        current = self._float_state(entity_id)
+        return current is not None and abs(current - value) < 0.5
+
+    async def _async_reserve_charge(self, s: ReserveSettings, hold: dict[str, float]) -> bool:
+        """Put the battery in a forced charge, writing only what is not already so: the held
+        numbers to 0 (no other battery discharging into this one), external control on, the
+        charge power, the charge-to level (the battery then stops by itself, also without
+        Home Assistant), forced mode charge."""
+        ok = True
+        for entity_id in hold:
+            if not self._number_is(entity_id, 0):
+                ok &= await self._async_call("number", "set_value",
+                                             {"entity_id": entity_id, "value": 0})
+        external = self.option(OPT_RESERVE_EXTERNAL)
+        if not self._state_is(external, "on"):
+            ok &= await self._async_call("switch", "turn_on", {"entity_id": external})
+        power = self.option(OPT_RESERVE_POWER_ENTITY)
+        if not self._number_is(power, s.power_w):
+            ok &= await self._async_call("number", "set_value",
+                                         {"entity_id": power, "value": s.power_w})
+        target = self.option(OPT_RESERVE_TARGET_ENTITY)
+        if target and not self._number_is(target, s.stop_soc):
+            ok &= await self._async_call("number", "set_value",
+                                         {"entity_id": target, "value": s.stop_soc})
+        mode = self.option(OPT_RESERVE_FORCE_MODE)
+        option = str(self.option(OPT_RESERVE_CHARGE_OPTION))
+        if not self._state_is(mode, option):
+            ok &= await self._async_call("select", "select_option",
+                                         {"entity_id": mode, "option": option})
+        return ok
+
+    async def _async_reserve_release(self, restore: dict[str, float]) -> bool:
+        """End the forced charge: forced mode standby, external control off (the battery
+        goes back to its own work mode), the held numbers back to their value."""
+        ok = await self._async_call("select", "select_option", {
+            "entity_id": self.option(OPT_RESERVE_FORCE_MODE),
+            "option": str(self.option(OPT_RESERVE_STANDBY_OPTION))})
+        ok &= await self._async_call("switch", "turn_off",
+                                     {"entity_id": self.option(OPT_RESERVE_EXTERNAL)})
+        for entity_id, value in restore.items():
+            ok &= await self._async_call("number", "set_value",
+                                         {"entity_id": entity_id, "value": value})
+        return ok
+
+    async def async_set_reserve(self, on: bool, restore: bool = False) -> None:
+        """Reserve guard switch. Turning it off during a charge stops the charge at once."""
+        self.reserve_on = on
+        if not restore:
+            try:
+                await self._async_reserve(dt_util.now())
+            except Exception:  # the switch must always switch
+                _LOGGER.exception("Could not run the battery reserve guard")
         self.async_update_listeners()
 
     # ------------------------------------------------------------ planner

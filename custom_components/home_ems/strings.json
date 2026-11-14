@@ -161,6 +161,17 @@
       },
       "appliance_start": {
         "name": "Best appliance start"
+      },
+      "battery_reserve_status": {
+        "name": "Battery reserve status",
+        "state": {
+          "off": "Off",
+          "not_configured": "Not configured",
+          "idle": "Above the start level",
+          "waiting": "Waiting",
+          "charging": "Charging",
+          "error": "Error"
+        }
       }
     },
     "switch": {
@@ -172,6 +183,9 @@
       },
       "planner_model": {
         "name": "Planner with house model"
+      },
+      "battery_reserve": {
+        "name": "Battery reserve"
       }
     }
   },
@@ -184,6 +198,7 @@
           "control": "Control (write setpoint)",
           "bedrooms": "Bedrooms",
           "pv_appliances": "PV curtailment and appliances",
+          "battery_reserve": "Battery reserve",
           "overview": "Energy and cost overview"
         }
       },
@@ -333,6 +348,24 @@
           "appliances": "Appliances (YAML: naam, kwh, duur, klaar_voor)"
         }
       },
+      "battery_reserve": {
+        "title": "Battery reserve",
+        "description": "Some batteries power their backup socket from the battery itself, also while the grid is there. Home EMS charges such a battery from the grid before it runs empty, while the switch 'Battery reserve' is on (off by default): at or below the start level, until the stop level, only while the grid meter gives values. The battery is set to external control and forced charge, and afterwards back to standby and its own control. Leave the other battery out of 'hold', or it discharges into this one.",
+        "data": {
+          "reserve_soc_entity": "State of charge of the backup battery (%)",
+          "reserve_external_control": "Switch: external control (e.g. RS485 control mode)",
+          "reserve_force_mode": "Select: forced mode",
+          "reserve_charge_power_entity": "Number: forced charge power (W)",
+          "reserve_charge_to_entity": "Number: charge to state of charge (optional; the battery then stops by itself)",
+          "reserve_grid_sensors": "Grid meter sensors that must give values (empty: the grid power sensor)",
+          "reserve_hold_entities": "Numbers set to 0 while charging and restored afterwards (e.g. max discharge of the other battery)",
+          "reserve_start_soc": "Start charging at or below",
+          "reserve_stop_soc": "Stop charging at",
+          "reserve_charge_power_w": "Charge power",
+          "reserve_charge_option": "Option of the forced mode that charges",
+          "reserve_standby_option": "Option of the forced mode that stops"
+        }
+      },
       "overview": {
         "title": "Energy and cost overview",
         "description": "Choose the long-term statistics (the same as in the Energy dashboard) and enter contracts and advance payments as YAML. Home EMS builds a monthly overview with a forecast for the rest of the year and, if a folder is given, writes it as CSV (semicolon, decimal comma) every hour.",
@@ -355,7 +388,8 @@
     "error": {
       "invalid_cost_settings": "The cost settings are not valid YAML or miss a field (each contract needs at least 'vanaf').",
       "invalid_bedrooms": "The rooms are not valid YAML, or a room misses 'entiteit' (a climate entity).",
-      "invalid_appliances": "The appliances are not valid YAML, or an appliance misses 'naam'."
+      "invalid_appliances": "The appliances are not valid YAML, or an appliance misses 'naam'.",
+      "reserve_band": "The stop level must be at least 2% above the start level."
     }
   }
 }

@@ -84,6 +84,20 @@ from .const import (
     OPT_WRITE_STEP,
     OVERVIEW_OPTIONS,
     PV_APPLIANCE_OPTIONS,
+    OPT_RESERVE_CHARGE_OPTION,
+    OPT_RESERVE_EXTERNAL,
+    OPT_RESERVE_FORCE_MODE,
+    OPT_RESERVE_GRID,
+    OPT_RESERVE_HOLD,
+    OPT_RESERVE_POWER,
+    OPT_RESERVE_POWER_ENTITY,
+    OPT_RESERVE_SOC,
+    OPT_RESERVE_STANDBY_OPTION,
+    OPT_RESERVE_START,
+    OPT_RESERVE_STOP,
+    OPT_RESERVE_TARGET_ENTITY,
+    RESERVE_DEFAULTS,
+    RESERVE_OPTIONS,
 )
 from .appliances import parse_appliances
 from .bedrooms import parse_rooms
@@ -196,11 +210,12 @@ def _flatten(user_input: dict[str, Any]) -> dict[str, Any]:
 
 
 class HomeEmsOptionsFlow(OptionsFlow):
-    """Five screens: the planner and advice, control (the executor), the bedrooms, PV
-    curtailment and appliances, and the energy and cost overview."""
+    """Six screens: the planner and advice, control (the executor), the bedrooms, PV
+    curtailment and appliances, the battery reserve guard, and the energy and cost overview."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return self.async_show_menu(step_id="init", menu_options=["planner", "control", "bedrooms", "pv_appliances", "overview"])
+        return self.async_show_menu(step_id="init", menu_options=["planner", "control", "bedrooms", "pv_appliances",
+                                                                    "battery_reserve", "overview"])
 
     def _save(self, keys: tuple[str, ...], user_input: dict[str, Any]) -> ConfigFlowResult:
         """Keep the options of the other screen; cleared fields are dropped."""
@@ -253,6 +268,36 @@ class HomeEmsOptionsFlow(OptionsFlow):
                 selector.TextSelectorConfig(multiline=True)),
         })
         return self.async_show_form(step_id="pv_appliances", data_schema=schema, errors=errors)
+
+    async def async_step_battery_reserve(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if float(user_input[OPT_RESERVE_STOP]) - float(user_input[OPT_RESERVE_START]) < 2:
+                errors[OPT_RESERVE_STOP] = "reserve_band"
+            else:
+                return self._save(RESERVE_OPTIONS, user_input)
+        current = {**RESERVE_DEFAULTS, **self.config_entry.options, **(user_input or {})}
+
+        def entity(domain: str, multiple: bool = False) -> selector.EntitySelector:
+            return selector.EntitySelector(selector.EntitySelectorConfig(domain=domain, multiple=multiple))
+
+        schema = vol.Schema({
+            _optional(current, OPT_RESERVE_SOC): entity("sensor"),
+            _optional(current, OPT_RESERVE_EXTERNAL): entity("switch"),
+            _optional(current, OPT_RESERVE_FORCE_MODE): entity("select"),
+            _optional(current, OPT_RESERVE_POWER_ENTITY): entity("number"),
+            _optional(current, OPT_RESERVE_TARGET_ENTITY): entity("number"),
+            _optional(current, OPT_RESERVE_GRID): entity("sensor", multiple=True),
+            _optional(current, OPT_RESERVE_HOLD): entity("number", multiple=True),
+            vol.Required(OPT_RESERVE_START, default=current[OPT_RESERVE_START]): _number(5, 90, 1, "%"),
+            vol.Required(OPT_RESERVE_STOP, default=current[OPT_RESERVE_STOP]): _number(10, 100, 1, "%"),
+            vol.Required(OPT_RESERVE_POWER, default=current[OPT_RESERVE_POWER]): _number(100, 2500, 50, "W"),
+            vol.Required(OPT_RESERVE_CHARGE_OPTION, default=current[OPT_RESERVE_CHARGE_OPTION]):
+                selector.TextSelector(),
+            vol.Required(OPT_RESERVE_STANDBY_OPTION, default=current[OPT_RESERVE_STANDBY_OPTION]):
+                selector.TextSelector(),
+        })
+        return self.async_show_form(step_id="battery_reserve", data_schema=schema, errors=errors)
 
     async def async_step_overview(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
