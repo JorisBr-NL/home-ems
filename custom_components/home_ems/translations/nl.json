@@ -46,6 +46,9 @@
       "heat_pump_running": {
         "name": "Warmtepomp draait"
       },
+      "model_run_now": {
+        "name": "Huismodel: run gepland nu"
+      },
       "plan_run_now": {
         "name": "Run gepland nu"
       },
@@ -54,6 +57,26 @@
       }
     },
     "sensor": {
+      "model_predicted_living": {
+        "name": "Huismodel: voorspelde woonkamer"
+      },
+      "model_prediction_error": {
+        "name": "Huismodel: voorspelfout"
+      },
+      "model_night_run_hours": {
+        "name": "Huismodel: runuren in de nacht"
+      },
+      "model_learned_hours": {
+        "name": "Huismodel: geleerde uren bij deze buitentemperatuur"
+      },
+      "model_readiness": {
+        "name": "Huismodel: klaar om te sturen",
+        "state": {
+          "ready": "Klaar",
+          "not_ready": "Niet klaar",
+          "too_little_data": "Te weinig data"
+        }
+      },
       "advice": {
         "name": "Advies",
         "state": {

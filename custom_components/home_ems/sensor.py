@@ -29,6 +29,7 @@ from .reserve import STATUSES as RESERVE_STATUSES
 from .coordinator import HomeEmsConfigEntry, HomeEmsCoordinator
 from .entity import HomeEmsEntity
 from .model import Advice
+from .model_check import READINESS_STATES
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -298,6 +299,53 @@ SENSORS: tuple[HomeEmsSensorDescription, ...] = (
         value_fn=lambda c: c.plan.expected_cost if c.plan else None,
         attrs_fn=lambda c: {"baseline_cost": c.plan.baseline_cost,
                             "savings": round(c.plan.savings, 3)} if c.plan else {},
+    ),
+    # checks on the planner with the house model before it steers (v0.12.2)
+    HomeEmsSensorDescription(
+        key="model_predicted_living",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value_fn=lambda c: c.prediction_log.last_predicted,
+        attrs_fn=lambda c: {"lead_hours": c.prediction_log.lead.total_seconds() / 3600},
+    ),
+    HomeEmsSensorDescription(
+        key="model_prediction_error",
+        # measured minus predicted; a difference, so no temperature device class
+        native_unit_of_measurement=UnitOfTemperature.KELVIN,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=2,
+        value_fn=lambda c: c.prediction_log.last_error,
+        attrs_fn=lambda c: {"mean_abs_error_24h": c.prediction_log.mean_abs_error(),
+                            "hours_compared": c.prediction_log.hours_compared(),
+                            "max_error": c.prediction_log.max_error_k},
+    ),
+    HomeEmsSensorDescription(
+        key="model_night_run_hours",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=2,
+        value_fn=lambda c: c.model_night_hours(),
+        attrs_fn=lambda c: {"fixed_tariff": c.fixed_tariff()},
+    ),
+    HomeEmsSensorDescription(
+        key="model_learned_hours",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value_fn=lambda c: (c.learned_now() or {}).get("hours"),
+        attrs_fn=lambda c: {k: v for k, v in (c.learned_now() or {}).items() if k != "hours"}
+        | {"min_hours": c.learner.min_hours},
+    ),
+    HomeEmsSensorDescription(
+        key="model_readiness",
+        device_class=SensorDeviceClass.ENUM,
+        options=READINESS_STATES,
+        value_fn=lambda c: c.model_readiness().state,
+        attrs_fn=lambda c: {"reasons": list(c.model_readiness().reasons)},
     ),
     HomeEmsSensorDescription(
         key="floor_margin",

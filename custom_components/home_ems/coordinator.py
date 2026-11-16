@@ -147,7 +147,8 @@ from .overview import (
     years_csv,
 )
 from .planner import QUARTER, Plan, PlannerSettings, Slot, build_slots, hour_of, plan
-from .learn import HeatPumpLearner
+from .learn import HeatPumpLearner, bucket
+from .model_check import PredictionLog, Readiness, night_run_hours, readiness
 from .planner_model import ModelSettings, plan_with_model
 from .watch import CLEAR, RAISE, DemandWatch, OutageWatch
 from .reserve import START as RESERVE_START, STOP as RESERVE_STOP
@@ -241,6 +242,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self.demand_watch = DemandWatch()
         self._pv_hold: bool | None = None
         self.model_plan: Plan | None = None
+        # checks on the model planner before it steers (v0.12.2)
+        self.prediction_log = PredictionLog()
         self.plan_status = PLAN_NO_PRICES
         self._temps: dict[datetime, float] = {}   # hour start (UTC) -> forecast temperature
         self._temps_fetched: datetime | None = None
@@ -489,6 +492,7 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             _LOGGER.exception("Could not run the battery reserve guard")
         self._watch_demand(now, evaluation.heat_pump_running, inputs.living_temp)
         self._learn(now, evaluation.heat_pump_running, inputs.heat_pump_power_w)
+        self.prediction_log.compare(now, inputs.living_temp)
         return evaluation
 
     def _solar_hold(self, inputs: Inputs, now: datetime, s: ArbiterSettings) -> bool:
@@ -727,6 +731,31 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         elif event == CLEAR:
             persistent_notification.async_dismiss(self.hass, notification_id)
         return reachable
+
+    def model_night_hours(self) -> float | None:
+        """Hours of runs the model planner has planned in the night window."""
+        if self.model_plan is None:
+            return None
+        return night_run_hours(self.model_plan.runs, self.night_now)
+
+    def learned_now(self) -> dict[str, Any] | None:
+        """What was learned about the heat pump at the outdoor temperature of now (hours of
+        running in that 2 C bucket, COP and heat), None without the sensors for it."""
+        data = self.config_entry.data
+        outside = self._float_state(data.get(CONF_OUTSIDE_TEMPERATURE))
+        if outside is None or not data.get(CONF_HEAT_OUTPUT):
+            return None
+        b = self.learner.buckets.get(bucket(outside))
+        hours = b.hours if b else 0.0
+        return {"outside": outside, "hours": round(hours, 1),
+                "cop": round(b.heat_kwh / b.el_kwh, 2) if b and b.el_kwh > 0 else None,
+                "heat_kw": round(b.heat_kwh / b.hours, 2) if b and b.hours > 0 else None}
+
+    def model_readiness(self) -> Readiness:
+        """Is the planner with the house model ready to steer? (see model_check)"""
+        learned = self.learned_now()
+        return readiness(self.prediction_log, self.model_night_hours(), self.fixed_tariff(),
+                         learned["hours"] if learned else None, self.learner.min_hours)
 
     def _learn(self, now: datetime, running: bool | None, el_w: float | None) -> None:
         """Learn COP and heat per outdoor temperature from the heat output sensor."""
@@ -990,6 +1019,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         except Exception:  # the model planner is new: it must never take the old one down
             _LOGGER.exception("Could not make the plan with the house model")
             self.model_plan = None
+        if self.model_plan is not None:
+            self.prediction_log.add_plan(self.model_plan.made, self.model_plan.predicted)
         use_model = self.planner_model and self.model_plan is not None
         self.plan = self.model_plan if use_model else budget
         self.plan_status = PLAN_OK if self._temps else PLAN_NO_TEMPERATURES
