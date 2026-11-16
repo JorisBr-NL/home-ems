@@ -18,8 +18,6 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          # Only needed for the default HACS store; this repo is installed as a custom repository.
-          ignore: license
 
   tests:
     runs-on: ubuntu-latest
