@@ -488,3 +488,41 @@ async def test_entities_are_grouped_in_sub_devices_under_home_ems(recorder_mock,
     assert entities.async_get(TARGET).device_id == main.id          # control stays on top
     runs = entities.async_get("sensor.home_ems_runs_today")
     assert runs.entity_category == "diagnostic"
+
+
+async def test_an_appliance_waits_with_its_plug_off_and_starts_on_solar(recorder_mock, hass, freezer):
+    freezer.move_to("2027-05-01T08:00:00+00:00")
+    entry = MockConfigEntry(domain=DOMAIN, title="Home EMS", data=DATA, unique_id=DOMAIN, options={
+        **NO_NIGHT,
+        "appliances": "- naam: Vaatwasser\n  kwh: 1.0\n  duur: 2\n  klaar_voor: \"18:00\"\n"
+                      "  stekker: switch.dish\n  max_wachten: 6\n"})
+    set_house(hass, flow=21.0, grid_w=300.0)                  # importing: no solar
+    hass.states.async_set("switch.dish", "on")
+    off = async_mock_service(hass, "switch", "turn_off")
+    on = async_mock_service(hass, "switch", "turn_on")
+    events = []
+    hass.bus.async_listen("home_ems_appliance", lambda e: events.append(e.data))
+    await _setup(hass, entry)
+    wait = "switch.home_ems_solar_and_appliances_wait_for_a_good_moment_vaatwasser"
+    assert hass.states.get(wait).state == "off"
+
+    # (the switch services are mocked to catch the plug, so arm through the coordinator,
+    # which is what the switch entity calls)
+    await entry.runtime_data.async_arm_appliance("Vaatwasser", True)
+    await hass.async_block_till_done()
+    assert [c.data["entity_id"] for c in off] == ["switch.dish"]   # plug off: waiting
+    assert hass.states.get(wait).state == "on"
+    assert events[-1]["action"] == "waiting"
+
+    for _ in range(3):                                          # still importing: waits
+        freezer.tick(timedelta(minutes=1))
+        await _refresh(hass, entry)
+    assert not [c for c in on if c.data["entity_id"] == "switch.dish"]
+
+    for _ in range(6):                                          # 800 W going out for 6 minutes
+        freezer.tick(timedelta(minutes=1))
+        set_house(hass, flow=21.0, grid_w=-800.0)
+        await _refresh(hass, entry)
+    assert [c.data["entity_id"] for c in on if c.data["entity_id"] == "switch.dish"] == ["switch.dish"]
+    assert hass.states.get(wait).state == "off"
+    assert (events[-1]["action"], events[-1]["reason"]) == ("started", "solar")

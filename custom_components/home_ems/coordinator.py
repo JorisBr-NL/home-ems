@@ -119,7 +119,8 @@ from .arbiter import (
     target_setpoint,
     until_window_end,
 )
-from .appliances import StartAdvice, best_start, parse_appliances
+from .appliance_control import MANUAL, Decision, available_power, decide
+from .appliances import Appliance, StartAdvice, best_start, parse_appliances
 from .bedrooms import Bedroom, BedroomSettings, RoomTarget, parse_rooms, room_targets
 from .curtail import CurtailAdvice, CurtailState, advise as curtail_advise
 from .executor import Action, ExecutorSettings, ExecutorState, action_is_retry, step
@@ -237,6 +238,10 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         self.curtail_state = CurtailState()
         self.curtail: CurtailAdvice | None = None
         self.appliance_advice: list[StartAdvice] = []
+        # v0.13: appliances waiting for a good moment (name -> since), their last decision
+        self.appliance_waiting: dict[str, datetime] = {}
+        self.appliance_decisions: dict[str, Decision] = {}
+        self._available_samples: list[tuple[datetime, float]] = []
         self._slots: list[Slot] = []
         self._surplus_samples: list[tuple[datetime, float]] = []
         self._pv_samples: list[tuple[datetime, float]] = []   # solar power, for the hold
@@ -325,6 +330,12 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             self.learner = HeatPumpLearner.from_dict(stored.get("learned"))
             # a charge in progress stays ours after a restart, so it is finished or stopped
             self.reserve = ReserveState.from_dict(stored.get("reserve"))
+            # an appliance that was waiting goes on waiting (its plug is still off)
+            for name, since in (stored.get("appliances") or {}).items():
+                try:
+                    self.appliance_waiting[name] = datetime.fromisoformat(since)
+                except (TypeError, ValueError):
+                    continue
 
     def _stored(self) -> dict[str, Any]:
         """Run state for the store, plus the solar boost and the raise on the thermostat,
@@ -333,7 +344,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             "extra": self.pv_boost.extra, "raised": self._prev_raised,
             "at": dt_util.now().isoformat()},
             "executor": self.executor.to_dict(), "latch": self.run_latch.to_dict(),
-            "learned": self.learner.to_dict(), "reserve": self.reserve.to_dict()}
+            "learned": self.learner.to_dict(), "reserve": self.reserve.to_dict(),
+            "appliances": {n: t.isoformat() for n, t in self.appliance_waiting.items()}}
 
     def _restore_boost(self, data: dict | None, now: datetime) -> None:
         """Take the boost back after a reload or a short restart (at most BOOST_KEEP old)."""
@@ -496,6 +508,15 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             await self._async_reserve(now)
         except Exception:  # the reserve guard must never stop the rest of the EMS
             _LOGGER.exception("Could not run the battery reserve guard")
+        available = available_power(inputs.grid_power_w, inputs.battery_charge_w)
+        if available is not None:
+            self._available_samples.append((now, available))
+        self._available_samples = [(t, v) for t, v in self._available_samples
+                                   if now - t <= PV_START_WINDOW]
+        try:
+            await self._async_appliances(now)
+        except Exception:  # appliances must never stop the rest of the EMS
+            _LOGGER.exception("Could not run the appliances")
         self._watch_demand(now, evaluation.heat_pump_running, inputs.living_temp)
         self._learn(now, evaluation.heat_pump_running, inputs.heat_pump_power_w)
         self.prediction_log.compare(now, inputs.living_temp)
@@ -695,12 +716,81 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         powers = {e: self._float_state(e) for e in entities}
         self.curtail = curtail_advise(self.curtail_state, powers, export, inputs.market_now, now)
 
-    def _advise_appliances(self, now: datetime) -> None:
+    def appliances(self) -> list[Appliance]:
         try:
-            items = parse_appliances(yaml.safe_load(self.option(OPT_APPLIANCES) or "") or [])
+            return parse_appliances(yaml.safe_load(self.option(OPT_APPLIANCES) or "") or [])
         except (yaml.YAMLError, ValueError) as err:
             _LOGGER.warning("Invalid appliance settings: %s", err)
-            items = []
+            return []
+
+    # ------------------------------------------------------------ appliances (v0.13)
+
+    async def _async_plug(self, entity_id: str, on: bool) -> bool:
+        try:
+            await self.hass.services.async_call(
+                "switch", "turn_on" if on else "turn_off", {"entity_id": entity_id}, blocking=True)
+        except HomeAssistantError as err:
+            _LOGGER.warning("Could not switch %s %s: %s", entity_id, "on" if on else "off", err)
+            return False
+        return True
+
+    def _appliance_event(self, name: str, action: str, reason: str | None, detail: str) -> None:
+        """An event for automations (notifications, a spoken message): waiting / started."""
+        self.hass.bus.async_fire(f"{DOMAIN}_appliance", {
+            "name": name, "action": action, "reason": reason, "detail": detail})
+
+    async def async_arm_appliance(self, name: str, wait: bool) -> None:
+        """The switch "wait for a good moment": on = plug off and wait; off = start now."""
+        appliance = next((a for a in self.appliances() if a.name == name and a.plug), None)
+        if appliance is None:
+            return
+        now = dt_util.now()
+        if wait and name not in self.appliance_waiting:
+            if await self._async_plug(appliance.plug, False):
+                self.appliance_waiting[name] = now
+                self._appliance_event(name, "waiting", None, "plug off, waiting for a good moment")
+        elif not wait and name in self.appliance_waiting:
+            await self._async_start_appliance(
+                appliance, Decision(True, MANUAL, "switched off by hand"))
+        await self._store.async_save(self._stored())
+        self.async_update_listeners()
+
+    async def _async_start_appliance(self, appliance: Appliance, decision: Decision) -> None:
+        """Plug on, once: a start is never taken back by the EMS (anti-flap)."""
+        if await self._async_plug(appliance.plug, True):
+            self.appliance_waiting.pop(appliance.name, None)
+            self.appliance_decisions[appliance.name] = decision
+            self._appliance_event(appliance.name, "started", decision.reason, decision.detail)
+            _LOGGER.info("Home EMS started %s (%s)", appliance.name, decision.reason)
+
+    async def _async_appliances(self, now: datetime) -> None:
+        if not self.appliance_waiting:
+            return
+        items = {a.name: a for a in self.appliances() if a.plug}
+        advice = {a.name: a for a in self.appliance_advice}
+        available = average_surplus(self._available_samples, now)   # needs ~5 minutes
+        changed = False
+        for name in list(self.appliance_waiting):
+            appliance = items.get(name)
+            if appliance is None:
+                # no longer in the settings: forget it (the plug is not ours any more)
+                self.appliance_waiting.pop(name)
+                changed = True
+                continue
+            if not self.enabled:
+                decision = Decision(True, MANUAL, "EMS switched off")
+            else:
+                decision = decide(appliance, self.appliance_waiting[name], now,
+                                  advice.get(name), available)
+            self.appliance_decisions[name] = decision
+            if decision.start:
+                await self._async_start_appliance(appliance, decision)
+                changed = True
+        if changed:
+            await self._store.async_save(self._stored())
+
+    def _advise_appliances(self, now: datetime) -> None:
+        items = self.appliances()
         base = float(self.option(OPT_BASE_LOAD))
         self.appliance_advice = [best_start(self._slots, now, a, base) for a in items] if self._slots else []
 

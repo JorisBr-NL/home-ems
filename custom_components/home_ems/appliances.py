@@ -2,8 +2,9 @@
 
 The machine is loaded and the plug is off; it resumes its program when power comes
 back. The EMS picks the start quarter with the lowest cost before the deadline: the
-price, or the market price for the part covered by solar surplus. Shadow mode: only
-advice, the plug is not switched.
+price, or the market price for the part covered by solar surplus; between equal costs
+(a fixed tariff) the window with the most solar. From v0.13 the EMS also switches the
+plug of an appliance that waits (see appliance_control).
 """
 from __future__ import annotations
 
@@ -21,6 +22,13 @@ class Appliance:
     kwh: float = 1.0              # energy per program
     hours: float = 2.0            # program length
     ready_by: time = time(7, 0)   # finished before this time (next occurrence)
+    plug: str | None = None       # v0.13: switch entity of the smart plug
+    max_wait: float = 6.0         # v0.13: hours of waiting at most, then it starts anyway
+
+    @property
+    def power_w(self) -> float:
+        """Average power while the program runs."""
+        return self.kwh / self.hours * 1000 if self.hours else 0.0
 
 
 @dataclass(frozen=True)
@@ -44,7 +52,8 @@ class StartAdvice:
 
 
 def parse_appliances(data: Any) -> list[Appliance]:
-    """From the YAML option: a list of {naam, kwh, duur (hours), klaar_voor}."""
+    """From the YAML option: a list of {naam, kwh, duur (hours), klaar_voor, and from v0.13
+    stekker (switch entity of the plug) and max_wachten (hours)}."""
     if not data:
         return []
     if not isinstance(data, list):
@@ -56,8 +65,12 @@ def parse_appliances(data: Any) -> list[Appliance]:
         ready = item.get("klaar_voor", "07:00")
         if isinstance(ready, int):  # YAML reads 7:00 without quotes as minutes
             ready = f"{ready // 60:02d}:{ready % 60:02d}"
+        plug = item.get("stekker")
+        if plug is not None and not str(plug).startswith("switch."):
+            raise ValueError("'stekker' must be a switch entity")
         out.append(Appliance(str(item["naam"]), float(item.get("kwh", 1.0)),
-                             float(item.get("duur", 2.0)), time.fromisoformat(str(ready))))
+                             float(item.get("duur", 2.0)), time.fromisoformat(str(ready)),
+                             str(plug) if plug else None, float(item.get("max_wachten", 6.0))))
     return out
 
 
@@ -94,7 +107,9 @@ def best_start(slots: list[Any], now: datetime, appliance: Appliance,
         start = first
         while start + n * QUARTER <= deadline:
             c = _cost(by_start, start, n, kw, base_load_kw)
-            if c is not None and (best is None or c[0] < best[1] - 1e-9):
+            # lowest cost; between equal costs (a fixed tariff) the most solar
+            if c is not None and (best is None or c[0] < best[1] - 1e-9
+                                  or (abs(c[0] - best[1]) <= 1e-9 and c[1] > best[2] + 1e-9)):
                 best = (start, c[0], c[1])
             start += QUARTER
     now_cost = _cost(by_start, first, n, kw, base_load_kw) if first is not None else None

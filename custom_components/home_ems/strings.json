@@ -212,6 +212,9 @@
       }
     },
     "switch": {
+      "appliance_wait": {
+        "name": "Wait for a good moment: {name}"
+      },
       "ems_enabled": {
         "name": "EMS active"
       },
