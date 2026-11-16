@@ -38,6 +38,8 @@ DIAGNOSTIC_KEYS = frozenset({
 
 def device_group(key: str) -> str | None:
     """The sub-device of an entity key, None for the main device."""
+    if key.startswith("appliance_wait_"):
+        return "solar"
     return next((group for group, keys in DEVICE_GROUPS.items() if key in keys), None)
 
 

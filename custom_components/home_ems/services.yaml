@@ -1,0 +1,11 @@
+appliance_answer:
+  fields:
+    name:
+      required: true
+      example: Vaatwasser
+      selector:
+        text:
+    approve:
+      required: true
+      selector:
+        boolean:
