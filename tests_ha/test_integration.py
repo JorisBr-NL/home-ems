@@ -411,7 +411,8 @@ async def test_battery_reserve_charges_at_the_start_level_and_stops_at_the_stop_
     await _refresh(hass, entry)
     assert log == []
 
-    # at the stop level: standby, own control, the other battery back to 800 W
+    # at the stop level: standby, own control, the other battery back to 800 W, and the
+    # charge-to level back to 100 % last (it is also the limit for charging on solar)
     freezer.tick(timedelta(minutes=30))
     hass.states.async_set("sensor.backup_battery_soc", "24")
     await _refresh(hass, entry)
@@ -420,6 +421,7 @@ async def test_battery_reserve_charges_at_the_start_level_and_stops_at_the_stop_
         ("select", "select_option", {"entity_id": "select.backup_battery_forced_mode", "option": "standby"}),
         ("switch", "turn_off", {"entity_id": "switch.backup_battery_external_control"}),
         ("number", "set_value", {"entity_id": "number.other_battery_max_discharge", "value": 800.0}),
+        ("number", "set_value", {"entity_id": "number.backup_battery_charge_to", "value": 100.0}),
     ]
 
 
