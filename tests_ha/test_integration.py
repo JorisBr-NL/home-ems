@@ -498,11 +498,12 @@ async def test_an_appliance_waits_with_its_plug_off_and_starts_on_solar(recorder
                       "  stekker: switch.dish\n  max_wachten: 6\n"})
     set_house(hass, flow=21.0, grid_w=300.0)                  # importing: no solar
     hass.states.async_set("switch.dish", "on")
-    off = async_mock_service(hass, "switch", "turn_off")
-    on = async_mock_service(hass, "switch", "turn_on")
     events = []
     hass.bus.async_listen("home_ems_appliance", lambda e: events.append(e.data))
     await _setup(hass, entry)
+    # after the setup: the switch integration registers its own services when it loads
+    off = async_mock_service(hass, "switch", "turn_off")
+    on = async_mock_service(hass, "switch", "turn_on")
     wait = "switch.home_ems_solar_and_appliances_wait_for_a_good_moment_vaatwasser"
     assert hass.states.get(wait).state == "off"
 
