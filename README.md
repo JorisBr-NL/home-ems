@@ -123,7 +123,7 @@ Sommige thuisbatterijen voeden hun **backup-stopcontact uit de batterij zelf**, 
 - **Stop** bij het stopniveau (standaard 24%), als de netmeter geen waarden meer geeft, als de schakelaar uit gaat, of na 3 uur laden zonder resultaat. Dat laatste geldt als storing: dan een uur geen nieuwe start.
 - **Anti-flap:** na een stop minstens 15 minuten geen nieuwe start. De band tussen start en stop is de hysterese.
 - **Laden:** externe sturing aan (bijvoorbeeld de RS485-modus), laadvermogen (standaard 1000 W; een batterij laadt rond 500–1500 W het zuinigst), *laden tot* het stopniveau (de batterij stopt dan zelf, ook zonder Home Assistant), geforceerde modus *charge*. Alleen wat nog niet goed staat wordt geschreven; staat de batterij tijdens het laden ineens anders, dan zet Home EMS hem terug.
-- **Stoppen:** geforceerde modus *standby* en daarna externe sturing uit, zodat de batterij terug gaat naar zijn eigen werkmodus.
+- **Stoppen:** geforceerde modus *standby* en daarna externe sturing uit, zodat de batterij terug gaat naar zijn eigen werkmodus. Als laatste gaat *laden tot* terug naar de waarde van voor de lading, of naar 100% als die waarde niet boven het stopniveau lag. *Laden tot* is ook de laadgrens in de eigen werkmodus; bleef hij op het stopniveau staan, dan laadde de batterij op zon niet verder (v0.12.1).
 - **Vasthouden:** getallen die tijdens het laden op 0 gaan en daarna terug naar hun oude waarde. Bijvoorbeeld het maximale ontlaadvermogen van een tweede batterij, anders ontlaadt die in deze batterij.
 - Een lading die bezig is, blijft bewaard over een herstart, zodat Home EMS hem afmaakt of netjes stopt.
 

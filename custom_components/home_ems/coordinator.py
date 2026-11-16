@@ -855,6 +855,11 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         if decision.action == RESERVE_START:
             restore = {e: v for e in self._entities(OPT_RESERVE_HOLD)
                        if (v := self._float_state(e)) is not None}
+            target = self.option(OPT_RESERVE_TARGET_ENTITY)
+            if target:
+                # the charge-to level is also the charge limit in the battery's own work
+                # mode (sun included): put it back afterwards, last (v0.12.1)
+                restore[target] = self._charge_to_after(s)
             if await self._async_reserve_charge(s, restore):
                 self.reserve.record_start(now, restore)
                 _LOGGER.info("Battery reserve: %s", decision.reason)
@@ -891,13 +896,23 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         current = self._float_state(entity_id)
         return current is not None and abs(current - value) < 0.5
 
+    def _charge_to_after(self, s: ReserveSettings) -> float:
+        """The charge-to level to put back after a charge: the value from before it, or 100%
+        when that value is not a normal limit (missing, or not above the stop level, for
+        example left at the stop level by an earlier charge)."""
+        value = self._float_state(self.option(OPT_RESERVE_TARGET_ENTITY))
+        return value if value is not None and value > s.stop_soc + 0.5 else 100.0
+
     async def _async_reserve_charge(self, s: ReserveSettings, hold: dict[str, float]) -> bool:
         """Put the battery in a forced charge, writing only what is not already so: the held
         numbers to 0 (no other battery discharging into this one), external control on, the
         charge power, the charge-to level (the battery then stops by itself, also without
         Home Assistant), forced mode charge."""
         ok = True
+        target = self.option(OPT_RESERVE_TARGET_ENTITY)
         for entity_id in hold:
+            if entity_id == target:
+                continue   # restored afterwards, but not held at 0
             if not self._number_is(entity_id, 0):
                 ok &= await self._async_call("number", "set_value",
                                              {"entity_id": entity_id, "value": 0})
@@ -908,7 +923,6 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         if not self._number_is(power, s.power_w):
             ok &= await self._async_call("number", "set_value",
                                          {"entity_id": power, "value": s.power_w})
-        target = self.option(OPT_RESERVE_TARGET_ENTITY)
         if target and not self._number_is(target, s.stop_soc):
             ok &= await self._async_call("number", "set_value",
                                          {"entity_id": target, "value": s.stop_soc})
@@ -921,12 +935,20 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
 
     async def _async_reserve_release(self, restore: dict[str, float]) -> bool:
         """End the forced charge: forced mode standby, external control off (the battery
-        goes back to its own work mode), the held numbers back to their value."""
+        goes back to its own work mode), then the held numbers and the charge-to level back
+        to their value. The charge-to level comes last, after external control is off: in
+        external control a write to it starts a new forced run."""
         ok = await self._async_call("select", "select_option", {
             "entity_id": self.option(OPT_RESERVE_FORCE_MODE),
             "option": str(self.option(OPT_RESERVE_STANDBY_OPTION))})
         ok &= await self._async_call("switch", "turn_off",
                                      {"entity_id": self.option(OPT_RESERVE_EXTERNAL)})
+        restore = dict(restore)
+        target = self.option(OPT_RESERVE_TARGET_ENTITY)
+        if target and target not in restore and self._number_is(target, self.reserve_settings().stop_soc):
+            restore[target] = 100.0   # a charge started by v0.12.0 did not remember the level
+        if target in restore:
+            restore[target] = restore.pop(target)   # last
         for entity_id, value in restore.items():
             ok &= await self._async_call("number", "set_value",
                                          {"entity_id": entity_id, "value": value})
