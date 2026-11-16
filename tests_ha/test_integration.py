@@ -527,3 +527,31 @@ async def test_an_appliance_waits_with_its_plug_off_and_starts_on_solar(recorder
     assert [c.data["entity_id"] for c in on if c.data["entity_id"] == "switch.dish"] == ["switch.dish"]
     assert hass.states.get(wait).state == "off"
     assert (events[-1]["action"], events[-1]["reason"]) == ("started", "solar")
+
+
+async def test_an_appliance_armed_at_a_good_moment_runs_on_and_answers_are_accepted(
+        recorder_mock, hass, freezer):
+    freezer.move_to("2027-05-01T08:00:00+00:00")
+    entry = MockConfigEntry(domain=DOMAIN, title="Home EMS", data=DATA, unique_id=DOMAIN, options={
+        **NO_NIGHT,
+        "appliances": "- naam: Wasmachine\n  kwh: 1.0\n  duur: 2\n  klaar_voor: \"17:00\"\n"
+                      "  stekker: switch.washer\n"})
+    set_house(hass, flow=21.0, grid_w=-900.0)                  # 900 W going out
+    hass.states.async_set("switch.washer", "on")
+    events = []
+    hass.bus.async_listen("home_ems_appliance", lambda e: events.append(e.data))
+    await _setup(hass, entry)
+    off = async_mock_service(hass, "switch", "turn_off")
+    for _ in range(6):                                          # five minutes of readings
+        freezer.tick(timedelta(minutes=1))
+        set_house(hass, flow=21.0, grid_w=-900.0)
+        await _refresh(hass, entry)
+    await entry.runtime_data.async_arm_appliance("Wasmachine", True)
+    await hass.async_block_till_done()
+    assert not [c for c in off if c.data["entity_id"] == "switch.washer"]   # plug stays on
+    assert (events[-1]["action"], events[-1]["reason"]) == ("started", "solar")
+    assert "Wasmachine" not in entry.runtime_data.appliance_waiting
+    # the answer service is there; without an open question it changes nothing
+    await hass.services.async_call(DOMAIN, "appliance_answer",
+                                   {"name": "Wasmachine", "approve": True}, blocking=True)
+    assert entry.runtime_data.appliance_later == {}

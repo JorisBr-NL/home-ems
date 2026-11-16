@@ -23,7 +23,7 @@ class Appliance:
     hours: float = 2.0            # program length
     ready_by: time = time(7, 0)   # finished before this time (next occurrence)
     plug: str | None = None       # v0.13: switch entity of the smart plug
-    max_wait: float = 6.0         # v0.13: hours of waiting at most, then it starts anyway
+    max_wait: float | None = None  # v0.13: hours of waiting at most (None = only the deadline)
 
     @property
     def power_w(self) -> float:
@@ -70,7 +70,8 @@ def parse_appliances(data: Any) -> list[Appliance]:
             raise ValueError("'stekker' must be a switch entity")
         out.append(Appliance(str(item["naam"]), float(item.get("kwh", 1.0)),
                              float(item.get("duur", 2.0)), time.fromisoformat(str(ready)),
-                             str(plug) if plug else None, float(item.get("max_wachten", 6.0))))
+                             str(plug) if plug else None,
+                             float(item["max_wachten"]) if item.get("max_wachten") else None))
     return out
 
 
@@ -95,10 +96,11 @@ def _cost(slots: dict[datetime, Any], start: datetime, n: int, kw: float,
 
 
 def best_start(slots: list[Any], now: datetime, appliance: Appliance,
-               base_load_kw: float = 0.4) -> StartAdvice:
-    """`slots` are planner slots (start, price, market, pv_kw) per quarter."""
+               base_load_kw: float = 0.4, deadline: datetime | None = None) -> StartAdvice:
+    """`slots` are planner slots (start, price, market, pv_kw) per quarter. `deadline`:
+    finished before this moment (default: the next `ready_by`)."""
     by_start = {s.start: s for s in slots}
-    deadline = next_deadline(now, appliance.ready_by)
+    deadline = deadline or next_deadline(now, appliance.ready_by)
     n = max(1, math.ceil(appliance.hours * 4 - 1e-9))
     kw = appliance.kwh / appliance.hours if appliance.hours else 0.0
     first = min((s.start for s in slots if s.start + QUARTER > now), default=None)

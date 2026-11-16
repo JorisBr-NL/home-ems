@@ -144,6 +144,9 @@ class ApplianceWaitSwitch(HomeEmsEntity, SwitchEntity):
             "last_start_reason": decision.reason if decision and decision.start else None,
             "best_start": dt_util.as_local(advice.start).isoformat()
             if advice and advice.start else None,
+            "question_open": self._name in c.appliance_questions,
+            "later_agreed_until": dt_util.as_local(c.appliance_later[self._name]).isoformat()
+            if self._name in c.appliance_later else None,
         }
 
     async def async_turn_on(self, **kwargs: Any) -> None:

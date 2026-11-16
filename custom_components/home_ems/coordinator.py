@@ -119,7 +119,14 @@ from .arbiter import (
     target_setpoint,
     until_window_end,
 )
-from .appliance_control import MANUAL, Decision, available_power, decide
+from .appliance_control import (
+    LATER_WINDOW,
+    MANUAL,
+    Decision,
+    available_power,
+    decide,
+    later_is_better,
+)
 from .appliances import Appliance, StartAdvice, best_start, parse_appliances
 from .bedrooms import Bedroom, BedroomSettings, RoomTarget, parse_rooms, room_targets
 from .curtail import CurtailAdvice, CurtailState, advise as curtail_advise
@@ -241,6 +248,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         # v0.13: appliances waiting for a good moment (name -> since), their last decision
         self.appliance_waiting: dict[str, datetime] = {}
         self.appliance_decisions: dict[str, Decision] = {}
+        self.appliance_questions: dict[str, datetime] = {}   # asked: later deadline on a yes
+        self.appliance_later: dict[str, datetime] = {}       # agreed: ready before this
         self._available_samples: list[tuple[datetime, float]] = []
         self._slots: list[Slot] = []
         self._surplus_samples: list[tuple[datetime, float]] = []
@@ -336,6 +345,11 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
                     self.appliance_waiting[name] = datetime.fromisoformat(since)
                 except (TypeError, ValueError):
                     continue
+            for name, until in (stored.get("appliances_later") or {}).items():
+                try:
+                    self.appliance_later[name] = datetime.fromisoformat(until)
+                except (TypeError, ValueError):
+                    continue
 
     def _stored(self) -> dict[str, Any]:
         """Run state for the store, plus the solar boost and the raise on the thermostat,
@@ -345,7 +359,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             "at": dt_util.now().isoformat()},
             "executor": self.executor.to_dict(), "latch": self.run_latch.to_dict(),
             "learned": self.learner.to_dict(), "reserve": self.reserve.to_dict(),
-            "appliances": {n: t.isoformat() for n, t in self.appliance_waiting.items()}}
+            "appliances": {n: t.isoformat() for n, t in self.appliance_waiting.items()},
+            "appliances_later": {n: t.isoformat() for n, t in self.appliance_later.items()}}
 
     def _restore_boost(self, data: dict | None, now: datetime) -> None:
         """Take the boost back after a reload or a short restart (at most BOOST_KEEP old)."""
@@ -734,24 +749,76 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             return False
         return True
 
-    def _appliance_event(self, name: str, action: str, reason: str | None, detail: str) -> None:
-        """An event for automations (notifications, a spoken message): waiting / started."""
+    def _appliance_event(self, name: str, action: str, reason: str | None, detail: str,
+                         **extra: Any) -> None:
+        """An event for automations (push message, spoken message): waiting, started,
+        ask (finishing later is better: yes or no?) and answered."""
         self.hass.bus.async_fire(f"{DOMAIN}_appliance", {
-            "name": name, "action": action, "reason": reason, "detail": detail})
+            "name": name, "action": action, "reason": reason, "detail": detail, **extra})
+
+    def _appliance_advice(self, appliance: Appliance, now: datetime,
+                          deadline: datetime | None = None) -> StartAdvice | None:
+        if not self._slots:
+            return None
+        return best_start(self._slots, now, appliance, float(self.option(OPT_BASE_LOAD)), deadline)
+
+    @staticmethod
+    def _minute(moment: datetime | None) -> str | None:
+        return dt_util.as_local(moment).isoformat(timespec="minutes") if moment else None
 
     async def async_arm_appliance(self, name: str, wait: bool) -> None:
-        """The switch "wait for a good moment": on = plug off and wait; off = start now."""
+        """The switch "wait for a good moment" (turned on by a remote button after starting
+        the machine). On: when now is a good moment the machine runs on, else the plug goes
+        off and the machine waits; when finishing after the deadline is clearly better, the
+        EMS asks first. Off by hand while waiting: start now."""
         appliance = next((a for a in self.appliances() if a.name == name and a.plug), None)
         if appliance is None:
             return
         now = dt_util.now()
         if wait and name not in self.appliance_waiting:
-            if await self._async_plug(appliance.plug, False):
+            early = self._appliance_advice(appliance, now)
+            late = (self._appliance_advice(appliance, now, early.deadline + LATER_WINDOW)
+                    if early else None)
+            ask = later_is_better(early, late)
+            decision = decide(appliance, now, now, early,
+                              average_surplus(self._available_samples, now))
+            if decision.start and not ask:
+                # a good moment now: the machine just runs on, the plug stays on
+                self.appliance_decisions[name] = decision
+                self._appliance_event(name, "started", decision.reason,
+                                      f"good moment now: {decision.detail}")
+            elif await self._async_plug(appliance.plug, False):
                 self.appliance_waiting[name] = now
-                self._appliance_event(name, "waiting", None, "plug off, waiting for a good moment")
+                when = {"start": self._minute(early.start if early else None),
+                        "end": self._minute(early.end if early else None),
+                        "deadline": self._minute(early.deadline if early else None)}
+                if ask:
+                    self.appliance_questions[name] = late.deadline
+                    saving = (round(early.cost - late.cost, 2)
+                              if early.cost is not None and late.cost is not None else None)
+                    self._appliance_event(
+                        name, "ask", None, "finishing later is better", **when,
+                        later_start=self._minute(late.start), later_end=self._minute(late.end),
+                        saving=saving, pv_share=late.pv_share, pv_share_in_time=early.pv_share)
+                else:
+                    self._appliance_event(name, "waiting", None,
+                                          "plug off, waiting for a good moment", **when)
         elif not wait and name in self.appliance_waiting:
             await self._async_start_appliance(
                 appliance, Decision(True, MANUAL, "switched off by hand"))
+        await self._store.async_save(self._stored())
+        self.async_update_listeners()
+
+    async def async_answer_appliance(self, name: str, approve: bool) -> None:
+        """The answer to "finishing later is better": yes = wait for the later moment;
+        no (or no answer) = the best moment that is ready in time."""
+        deadline = self.appliance_questions.pop(name, None)
+        if deadline is None or name not in self.appliance_waiting:
+            return
+        if approve:
+            self.appliance_later[name] = deadline
+        self._appliance_event(name, "answered", None,
+                              "later agreed" if approve else "ready in time", approve=approve)
         await self._store.async_save(self._stored())
         self.async_update_listeners()
 
@@ -759,6 +826,8 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         """Plug on, once: a start is never taken back by the EMS (anti-flap)."""
         if await self._async_plug(appliance.plug, True):
             self.appliance_waiting.pop(appliance.name, None)
+            self.appliance_questions.pop(appliance.name, None)
+            self.appliance_later.pop(appliance.name, None)
             self.appliance_decisions[appliance.name] = decision
             self._appliance_event(appliance.name, "started", decision.reason, decision.detail)
             _LOGGER.info("Home EMS started %s (%s)", appliance.name, decision.reason)
@@ -767,7 +836,6 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         if not self.appliance_waiting:
             return
         items = {a.name: a for a in self.appliances() if a.plug}
-        advice = {a.name: a for a in self.appliance_advice}
         available = average_surplus(self._available_samples, now)   # needs ~5 minutes
         changed = False
         for name in list(self.appliance_waiting):
@@ -775,13 +843,17 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             if appliance is None:
                 # no longer in the settings: forget it (the plug is not ours any more)
                 self.appliance_waiting.pop(name)
+                self.appliance_questions.pop(name, None)
+                self.appliance_later.pop(name, None)
                 changed = True
                 continue
+            later = self.appliance_later.get(name)
             if not self.enabled:
                 decision = Decision(True, MANUAL, "EMS switched off")
             else:
                 decision = decide(appliance, self.appliance_waiting[name], now,
-                                  advice.get(name), available)
+                                  self._appliance_advice(appliance, now, later), available,
+                                  approved_later=later is not None)
             self.appliance_decisions[name] = decision
             if decision.start:
                 await self._async_start_appliance(appliance, decision)

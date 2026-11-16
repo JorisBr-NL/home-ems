@@ -140,16 +140,19 @@ BEDROOM_OPTIONS = (OPT_BEDROOMS, *BEDROOM_DEFAULTS)
 OPT_PV_POWER = "pv_power_entities"     # live power per inverter (W), one sensor each
 OPT_APPLIANCES = "appliances"          # YAML, see appliances.parse_appliances
 PV_APPLIANCE_OPTIONS = (OPT_PV_POWER, OPT_APPLIANCES)
-APPLIANCES_EXAMPLE = """# Witgoed achter een slimme stekker; Home EMS adviseert de goedkoopste starttijd.
-# Met 'stekker' krijgt het apparaat een schakelaar "Wacht op goed moment": aan = de
-# stekker gaat uit en Home EMS zet hem weer aan op het goede moment (zon, goedkoopste
-# venster, uiterlijk zo dat hij klaar is voor 'klaar_voor', of na 'max_wachten' uur).
+APPLIANCES_EXAMPLE = """\
+# Witgoed achter een slimme stekker; Home EMS adviseert de goedkoopste starttijd.
+# Met 'stekker' krijgt het apparaat een schakelaar "Wacht op goed moment". De stekker
+# staat altijd aan. Na het starten van de machine zet je die schakelaar aan (bijvoorbeeld
+# met een knop): is het nu een goed moment, dan loopt de machine gewoon door; anders gaat
+# de stekker uit en zet Home EMS hem weer aan bij zon, het beste venster, of uiterlijk zo
+# dat hij klaar is voor 'klaar_voor'. Is later klaar duidelijk beter, dan vraagt Home EMS
+# het eerst (event home_ems_appliance, action "ask"). 'max_wachten' (uren) is optioneel.
 # - naam: Vaatwasser
 #   kwh: 1.1
 #   duur: 2.5
-#   klaar_voor: "18:00"
+#   klaar_voor: "17:00"
 #   stekker: switch.vaatwasser
-#   max_wachten: 6
 """
 BEDROOMS_EXAMPLE = """\
 # Radiatorthermostaten in de slaapkamers (alleen een klep; warm water stroomt als de woonkamer vraagt).

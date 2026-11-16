@@ -90,3 +90,38 @@ def test_equal_costs_pick_the_window_with_the_most_solar():
              for k in range(24 * 4)]
     adv = ap.best_start(slots, NOW, DISH)
     assert adv.start.hour == 11 and adv.pv_share == pytest.approx(1.0)
+
+
+def test_without_plan_data_the_deadline_still_holds_and_max_wait_is_optional():
+    free = ap.Appliance("Wasmachine", kwh=1.0, hours=2.0, ready_by=time(17, 0), plug="switch.w")
+    assert free.max_wait is None
+    assert ac.decide(free, NOW, NOW.replace(hour=14, minute=59), None, 0.0).start is False
+    d = ac.decide(free, NOW, NOW.replace(hour=15), None, 0.0)    # 17:00 minus 2 h
+    assert (d.start, d.reason) == (True, ac.DEADLINE)
+
+
+def _adv(start, end, deadline, cost, pv):
+    return ap.StartAdvice("Vaatwasser", start, end, deadline, cost, None, pv)
+
+
+def test_ask_only_when_finishing_later_is_clearly_better():
+    deadline = NOW.replace(hour=17)
+    early = _adv(NOW.replace(hour=10), NOW.replace(hour=12, minute=30), deadline, 0.30, 0.2)
+    later_end = deadline + timedelta(hours=5)
+    cheaper = _adv(later_end - timedelta(hours=2.5), later_end, deadline + ac.LATER_WINDOW, 0.20, 0.0)
+    sunnier = _adv(later_end - timedelta(hours=2.5), later_end, deadline + ac.LATER_WINDOW, 0.30, 0.9)
+    same = _adv(later_end - timedelta(hours=2.5), later_end, deadline + ac.LATER_WINDOW, 0.28, 0.3)
+    in_time = _adv(NOW.replace(hour=11), NOW.replace(hour=13, minute=30), deadline + ac.LATER_WINDOW, 0.10, 0.9)
+    assert ac.later_is_better(early, cheaper)        # saves 0.10 EUR
+    assert ac.later_is_better(early, sunnier)        # 70 % more on solar
+    assert not ac.later_is_better(early, same)       # not worth asking
+    assert not ac.later_is_better(early, in_time)    # it is ready in time anyway
+    assert not ac.later_is_better(None, cheaper)
+    too_late = _adv(None, None, deadline, None, None)
+    assert not ac.later_is_better(too_late, cheaper)  # the deadline rule starts it now
+
+
+def test_an_agreed_later_moment_has_no_timeout():
+    late = advice(NOW.replace(hour=20), deadline=NOW.replace(hour=23))
+    assert ac.decide(DISH, NOW, NOW + timedelta(hours=7), late, 0.0, approved_later=True).start is False
+    assert ac.decide(DISH, NOW, NOW + timedelta(hours=7), late, 0.0).reason == ac.TIMEOUT

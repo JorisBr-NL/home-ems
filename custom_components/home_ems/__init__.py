@@ -6,14 +6,37 @@ what it would do (advice, plan, target setpoint).
 """
 from __future__ import annotations
 
+import voluptuous as vol
+
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers import config_validation as cv, device_registry as dr
+from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN, NAME
 from .coordinator import HomeEmsConfigEntry, HomeEmsCoordinator
 
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SWITCH]
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+SERVICE_APPLIANCE_ANSWER = "appliance_answer"
+APPLIANCE_ANSWER_SCHEMA = vol.Schema({
+    vol.Required("name"): cv.string,
+    vol.Required("approve"): cv.boolean,
+})
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """The answer to "finishing later is better" for a waiting appliance (v0.13), for
+    example from the action buttons of a push message."""
+
+    async def answer(call: ServiceCall) -> None:
+        for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+            await entry.runtime_data.async_answer_appliance(call.data["name"], call.data["approve"])
+
+    hass.services.async_register(DOMAIN, SERVICE_APPLIANCE_ANSWER, answer,
+                                 schema=APPLIANCE_ANSWER_SCHEMA)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: HomeEmsConfigEntry) -> bool:

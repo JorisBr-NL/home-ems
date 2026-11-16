@@ -382,7 +382,7 @@
       },
       "pv_appliances": {
         "title": "PV curtailment and appliances",
-        "description": "Shadow mode. Curtailment: at a negative market price Home EMS shows which inverter it would switch off (each behind its own switch), only when that inverter delivers less than the export. Appliances: the cheapest start before the ready-by time, from the price and solar forecast. With 'stekker' (the switch of the smart plug) an appliance gets a switch \"Wait for a good moment\": Home EMS turns the plug off, and on again at the first of solar, the best window, the deadline or 'max_wachten' hours.",
+        "description": "Shadow mode. Curtailment: at a negative market price Home EMS shows which inverter it would switch off (each behind its own switch), only when that inverter delivers less than the export. Appliances: the cheapest start before the ready-by time, from the price and solar forecast. With 'stekker' (the switch of the smart plug) an appliance gets a switch \"Wait for a good moment\". The plug stays on; turn the switch on after starting the machine: at a good moment it runs on, otherwise the plug goes off until solar, the best window or the latest start to be ready by 'klaar_voor'. When finishing later is clearly better, Home EMS asks first (event home_ems_appliance, answer with the service home_ems.appliance_answer). 'max_wachten' (hours) is optional.",
         "data": {
           "pv_power_entities": "Live power per inverter (W, one sensor each)",
           "appliances": "Appliances (YAML: naam, kwh, duur, klaar_voor, optional stekker and max_wachten)"
@@ -430,6 +430,22 @@
       "invalid_bedrooms": "The rooms are not valid YAML, or a room misses 'entiteit' (a climate entity).",
       "invalid_appliances": "The appliances are not valid YAML, or an appliance misses 'naam'.",
       "reserve_band": "The stop level must be at least 2% above the start level."
+    }
+  },
+  "services": {
+    "appliance_answer": {
+      "name": "Answer for an appliance",
+      "description": "The answer to 'finishing later is better' for an appliance that waits for a good moment: yes = wait for the later moment, no = the best moment that is ready in time.",
+      "fields": {
+        "name": {
+          "name": "Appliance",
+          "description": "The name of the appliance, as in the appliance settings."
+        },
+        "approve": {
+          "name": "Later agreed",
+          "description": "Yes: finish later. No: be ready in time."
+        }
+      }
     }
   }
 }
