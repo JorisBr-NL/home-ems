@@ -46,6 +46,9 @@
       "heat_pump_running": {
         "name": "Heat pump running"
       },
+      "model_run_now": {
+        "name": "House model: run planned now"
+      },
       "plan_run_now": {
         "name": "Planned run now"
       },
@@ -54,6 +57,26 @@
       }
     },
     "sensor": {
+      "model_predicted_living": {
+        "name": "House model: predicted living room"
+      },
+      "model_prediction_error": {
+        "name": "House model: prediction error"
+      },
+      "model_night_run_hours": {
+        "name": "House model: run hours at night"
+      },
+      "model_learned_hours": {
+        "name": "House model: hours learned at this outdoor temperature"
+      },
+      "model_readiness": {
+        "name": "House model: ready to steer",
+        "state": {
+          "ready": "Ready",
+          "not_ready": "Not ready",
+          "too_little_data": "Too little data"
+        }
+      },
       "advice": {
         "name": "Advice",
         "state": {

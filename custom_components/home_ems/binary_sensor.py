@@ -24,6 +24,7 @@ async def async_setup_entry(
             HeatPumpRunningSensor(coordinator, "heat_pump_running"),
             PricePeakSensor(coordinator, "price_peak"),
             PlanRunNowSensor(coordinator, "plan_run_now"),
+            ModelRunNowSensor(coordinator, "model_run_now"),
         ]
     )
 
@@ -51,3 +52,20 @@ class PlanRunNowSensor(HomeEmsEntity, BinarySensorEntity):
     def is_on(self) -> bool | None:
         plan = self.coordinator.plan
         return plan.running_now(dt_util.now()) if plan else None
+
+
+class ModelRunNowSensor(HomeEmsEntity, BinarySensorEntity):
+    """On while the planner with the house model has a run planned for this moment, also
+    while its switch is off (v0.12.2): to compare its plan with the control before it steers."""
+
+    @property
+    def is_on(self) -> bool | None:
+        plan = self.coordinator.model_plan
+        return plan.running_now(dt_util.now()) if plan else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str | None]:
+        plan = self.coordinator.model_plan
+        now = dt_util.now()
+        run = next((r for r in plan.runs if r.start <= now < r.end), None) if plan else None
+        return {"reason": run.reason if run else None}

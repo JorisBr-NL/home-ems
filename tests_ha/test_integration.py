@@ -460,3 +460,14 @@ async def test_battery_reserve_stops_when_the_grid_meter_goes_silent(recorder_mo
     assert hass.states.get(RESERVE_STATUS).state == "waiting"
     assert log[:2] == [("select", "select_option"), ("switch", "turn_off")]
 
+
+
+async def test_house_model_checks_are_there_before_the_model_steers(recorder_mock, hass, entry):
+    set_house(hass)
+    await _setup(hass, entry)
+    ready = hass.states.get("sensor.home_ems_house_model_ready_to_steer")
+    assert ready.state == "too_little_data"        # no plan, nothing compared or learned yet
+    assert ready.attributes["reasons"]
+    assert hass.states.get("sensor.home_ems_house_model_prediction_error") is not None
+    assert hass.states.get("sensor.home_ems_house_model_run_hours_at_night") is not None
+    assert hass.states.get("binary_sensor.home_ems_house_model_run_planned_now") is not None
