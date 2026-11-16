@@ -382,10 +382,10 @@
       },
       "pv_appliances": {
         "title": "PV curtailment and appliances",
-        "description": "Shadow mode. Curtailment: at a negative market price Home EMS shows which inverter it would switch off (each behind its own switch), only when that inverter delivers less than the export. Appliances: the cheapest start before the ready-by time, from the price and solar forecast.",
+        "description": "Shadow mode. Curtailment: at a negative market price Home EMS shows which inverter it would switch off (each behind its own switch), only when that inverter delivers less than the export. Appliances: the cheapest start before the ready-by time, from the price and solar forecast. With 'stekker' (the switch of the smart plug) an appliance gets a switch \"Wait for a good moment\": Home EMS turns the plug off, and on again at the first of solar, the best window, the deadline or 'max_wachten' hours.",
         "data": {
           "pv_power_entities": "Live power per inverter (W, one sensor each)",
-          "appliances": "Appliances (YAML: naam, kwh, duur, klaar_voor)"
+          "appliances": "Appliances (YAML: naam, kwh, duur, klaar_voor, optional stekker and max_wachten)"
         }
       },
       "battery_reserve": {
