@@ -478,9 +478,9 @@ async def test_entities_are_grouped_in_sub_devices_under_home_ems(recorder_mock,
     set_house(hass)
     await _setup(hass, entry)
     devices, entities = dr.async_get(hass), er.async_get(hass)
-    main = devices.async_get_device(identifiers={(DOMAIN, entry.entry_id)})
-    subs = {d.name for d in dr.async_entries_for_config_entry(devices, entry.entry_id)
-            if d.via_device_id == main.id}
+    ours = dr.async_entries_for_config_entry(devices, entry.entry_id)
+    main = next(d for d in ours if (DOMAIN, entry.entry_id) in d.identifiers)
+    subs = {d.name for d in ours if d.via_device_id == main.id}
     assert subs == {"Home EMS planner", "Home EMS solar and appliances", "Home EMS battery",
                     "Home EMS overview"}
     ready = entities.async_get("sensor.home_ems_planner_house_model_ready_to_steer")
