@@ -41,6 +41,20 @@
       "reconfigure_successful": "De entiteiten zijn gewijzigd."
     }
   },
+  "device": {
+    "planner": {
+      "name": "Home EMS planner"
+    },
+    "solar": {
+      "name": "Home EMS zon en witgoed"
+    },
+    "battery": {
+      "name": "Home EMS batterij"
+    },
+    "overview": {
+      "name": "Home EMS overzicht"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "heat_pump_running": {
@@ -64,7 +78,7 @@
         "name": "Huismodel: voorspelfout"
       },
       "model_night_run_hours": {
-        "name": "Huismodel: runuren in de nacht"
+        "name": "Huismodel: nachtruns boven het nachtminimum"
       },
       "model_learned_hours": {
         "name": "Huismodel: geleerde uren bij deze buitentemperatuur"

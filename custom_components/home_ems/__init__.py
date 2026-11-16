@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 
+from .const import DOMAIN, NAME
 from .coordinator import HomeEmsConfigEntry, HomeEmsCoordinator
 
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SWITCH]
@@ -20,6 +22,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomeEmsConfigEntry) -> b
     entry.runtime_data = coordinator
     # new settings take effect right away (and the plan is made again)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
+    # the main device first: the sub-devices (planner, solar, battery, overview) hang under it
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, entry.entry_id)}, name=NAME,
+        entry_type=dr.DeviceEntryType.SERVICE)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 

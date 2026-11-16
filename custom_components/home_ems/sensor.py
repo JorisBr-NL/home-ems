@@ -328,7 +328,8 @@ SENSORS: tuple[HomeEmsSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=2,
         value_fn=lambda c: c.model_night_hours(),
-        attrs_fn=lambda c: {"fixed_tariff": c.fixed_tariff()},
+        attrs_fn=lambda c: {"fixed_tariff": c.fixed_tariff(),
+                            "all_night_hours": c.model_night_hours(early_only=False)},
     ),
     HomeEmsSensorDescription(
         key="model_learned_hours",

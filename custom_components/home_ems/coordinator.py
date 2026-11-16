@@ -148,7 +148,13 @@ from .overview import (
 )
 from .planner import QUARTER, Plan, PlannerSettings, Slot, build_slots, hour_of, plan
 from .learn import HeatPumpLearner, bucket
-from .model_check import PredictionLog, Readiness, night_run_hours, readiness
+from .model_check import (
+    PredictionLog,
+    Readiness,
+    early_night_run_hours,
+    night_run_hours,
+    readiness,
+)
 from .planner_model import ModelSettings, plan_with_model
 from .watch import CLEAR, RAISE, DemandWatch, OutageWatch
 from .reserve import START as RESERVE_START, STOP as RESERVE_STOP
@@ -732,11 +738,21 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
             persistent_notification.async_dismiss(self.hass, notification_id)
         return reachable
 
-    def model_night_hours(self) -> float | None:
-        """Hours of runs the model planner has planned in the night window."""
+    def model_night_hours(self, early_only: bool = True) -> float | None:
+        """Hours of runs the model planner has planned in the night window; by default only
+        the runs that start while the predicted room is still above the night minimum."""
         if self.model_plan is None:
             return None
-        return night_run_hours(self.model_plan.runs, self.night_now)
+        if not early_only:
+            return night_run_hours(self.model_plan.runs, self.night_now)
+        predicted = {t: temp for t, temp in self.model_plan.predicted}
+
+        def at(moment: datetime) -> float | None:
+            return predicted.get(moment.replace(minute=moment.minute - moment.minute % 15,
+                                                second=0, microsecond=0))
+
+        return early_night_run_hours(self.model_plan.runs, self.night_now, at,
+                                     lambda moment: self.limits(moment)[0])
 
     def learned_now(self) -> dict[str, Any] | None:
         """What was learned about the heat pump at the outdoor temperature of now (hours of

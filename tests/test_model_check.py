@@ -98,3 +98,17 @@ def test_readiness_sums_up_the_checks():
     r = mc.readiness(mc.PredictionLog(), None, True, 1.0, 3.0)
     assert r.state == mc.TOO_LITTLE_DATA and len(r.reasons) == 3
     assert mc.readiness(good, 0.0, True, None, 3.0).state == mc.TOO_LITTLE_DATA
+
+
+def test_only_night_runs_above_the_night_minimum_count():
+    night = lambda t: t.hour >= 20 or t.hour < 7       # noqa: E731
+    lower = lambda t: 18.5                             # noqa: E731
+    temps = {T0.replace(hour=2): 18.55,                # at the night minimum: needed
+             T0.replace(hour=22): 19.1}                # well above it: early
+    runs = [Run(T0.replace(hour=2), T0.replace(hour=4)),
+            Run(T0.replace(hour=22), T0.replace(hour=23)),
+            Run(T0.replace(hour=14), T0.replace(hour=16))]   # by day: never counted
+    assert mc.night_run_hours(runs, night) == 3.0
+    assert mc.early_night_run_hours(runs, night, temps.get, lower) == 1.0
+    # without a prediction for the start the run is not counted
+    assert mc.early_night_run_hours(runs, night, lambda t: None, lower) == 0.0
