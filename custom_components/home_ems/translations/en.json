@@ -41,6 +41,20 @@
       "reconfigure_successful": "The entities have been changed."
     }
   },
+  "device": {
+    "planner": {
+      "name": "Home EMS planner"
+    },
+    "solar": {
+      "name": "Home EMS solar and appliances"
+    },
+    "battery": {
+      "name": "Home EMS battery"
+    },
+    "overview": {
+      "name": "Home EMS overview"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "heat_pump_running": {
@@ -64,7 +78,7 @@
         "name": "House model: prediction error"
       },
       "model_night_run_hours": {
-        "name": "House model: run hours at night"
+        "name": "House model: run hours at night above the minimum"
       },
       "model_learned_hours": {
         "name": "House model: hours learned at this outdoor temperature"

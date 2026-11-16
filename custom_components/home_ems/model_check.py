@@ -95,6 +95,25 @@ def night_run_hours(runs: Iterable, night: Callable[[datetime], bool]) -> float:
     return quarters / 4
 
 
+EARLY_MARGIN = 0.2   # K above the night minimum: a night run starting higher is early
+
+
+def early_night_run_hours(runs: Iterable, night: Callable[[datetime], bool],
+                          predicted: Callable[[datetime], float | None],
+                          lower: Callable[[datetime], float],
+                          margin: float = EARLY_MARGIN) -> float:
+    """Night hours of the planned runs that start at night while the predicted room is
+    still more than `margin` above the lower limit (the night minimum). A run at the night
+    minimum is needed for comfort and is what the control does itself (v0.12.3: the
+    first check counted those too, so it never said ready)."""
+    early = []
+    for run in runs:
+        temp = predicted(run.start)
+        if night(run.start) and temp is not None and temp > lower(run.start) + margin:
+            early.append(run)
+    return night_run_hours(early, night)
+
+
 @dataclass(frozen=True)
 class Readiness:
     state: str
@@ -115,7 +134,8 @@ def readiness(log: PredictionLog, night_hours: float | None, fixed_tariff: bool,
     if night_hours is None:
         short.append("no plan with the house model")
     elif fixed_tariff and night_hours > 0:
-        reasons.append(f"{night_hours:.2f} h of runs planned at night with a fixed tariff")
+        reasons.append(f"{night_hours:.2f} h of runs planned at night above the night minimum "
+                       "with a fixed tariff")
     if learned_hours is None:
         short.append("no outdoor temperature or heat output sensor")
     elif learned_hours < min_learned_hours:

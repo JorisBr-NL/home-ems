@@ -158,7 +158,7 @@ async def test_negative_price_shows_which_inverter_would_go_off(hass, freezer):
         "pv_power_entities": ["sensor.inverter_a", "sensor.inverter_b"]})
     await _setup(hass, entry)
 
-    curtail = hass.states.get("sensor.home_ems_pv_curtailment_inverters_off")
+    curtail = hass.states.get("sensor.home_ems_solar_and_appliances_pv_curtailment_inverters_off")
     assert curtail.state == "1"
     assert curtail.attributes["off"] == ["sensor.inverter_a"]
 
@@ -291,7 +291,7 @@ async def test_pause_after_a_change_by_hand_survives_a_reload(recorder_mock, has
 async def test_planner_model_switch_is_off_by_default_and_switches_without_reload(recorder_mock, hass, entry):
     set_house(hass)
     await _setup(hass, entry)
-    switch = "switch.home_ems_planner_with_house_model"
+    switch = "switch.home_ems_planner_planner_with_house_model"
     assert hass.states.get(switch).state == "off"
     coordinator = entry.runtime_data
     await hass.services.async_call("switch", "turn_on", {"entity_id": switch}, blocking=True)
@@ -346,8 +346,8 @@ RESERVE = {
     "reserve_grid_sensors": ["sensor.grid_phase_1", "sensor.grid_phase_2"],
     "reserve_hold_entities": ["number.other_battery_max_discharge"],
 }
-RESERVE_SWITCH = "switch.home_ems_battery_reserve"
-RESERVE_STATUS = "sensor.home_ems_battery_reserve_status"
+RESERVE_SWITCH = "switch.home_ems_battery_battery_reserve"
+RESERVE_STATUS = "sensor.home_ems_battery_battery_reserve_status"
 
 
 def set_battery(hass, soc, *, external="off", mode="standby", grid="230"):
@@ -465,9 +465,26 @@ async def test_battery_reserve_stops_when_the_grid_meter_goes_silent(recorder_mo
 async def test_house_model_checks_are_there_before_the_model_steers(recorder_mock, hass, entry):
     set_house(hass)
     await _setup(hass, entry)
-    ready = hass.states.get("sensor.home_ems_house_model_ready_to_steer")
+    ready = hass.states.get("sensor.home_ems_planner_house_model_ready_to_steer")
     assert ready.state == "too_little_data"        # no plan, nothing compared or learned yet
     assert ready.attributes["reasons"]
-    assert hass.states.get("sensor.home_ems_house_model_prediction_error") is not None
-    assert hass.states.get("sensor.home_ems_house_model_run_hours_at_night") is not None
-    assert hass.states.get("binary_sensor.home_ems_house_model_run_planned_now") is not None
+    assert hass.states.get("sensor.home_ems_planner_house_model_prediction_error") is not None
+    assert hass.states.get("sensor.home_ems_planner_house_model_run_hours_at_night_above_the_minimum") is not None
+    assert hass.states.get("binary_sensor.home_ems_planner_house_model_run_planned_now") is not None
+
+
+async def test_entities_are_grouped_in_sub_devices_under_home_ems(recorder_mock, hass, entry):
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+    set_house(hass)
+    await _setup(hass, entry)
+    devices, entities = dr.async_get(hass), er.async_get(hass)
+    ours = dr.async_entries_for_config_entry(devices, entry.entry_id)
+    main = next(d for d in ours if (DOMAIN, entry.entry_id) in d.identifiers)
+    subs = {d.name for d in ours if d.via_device_id == main.id}
+    assert subs == {"Home EMS planner", "Home EMS solar and appliances", "Home EMS battery",
+                    "Home EMS overview"}
+    ready = entities.async_get("sensor.home_ems_planner_house_model_ready_to_steer")
+    assert devices.async_get(ready.device_id).via_device_id == main.id
+    assert entities.async_get(TARGET).device_id == main.id          # control stays on top
+    runs = entities.async_get("sensor.home_ems_runs_today")
+    assert runs.entity_category == "diagnostic"
