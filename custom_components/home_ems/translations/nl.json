@@ -385,7 +385,7 @@
         "description": "Schaduwmodus. Aftoppen: bij een negatieve marktprijs laat Home EMS zien welke omvormer het zou uitzetten (elk achter een eigen schakelaar), alleen als die minder levert dan de teruglevering. Witgoed: de goedkoopste start vóór de klaar-tijd, uit de prijs- en zonneverwachting. Met 'stekker' (de schakelaar van de slimme stekker) krijgt een apparaat een schakelaar \"Wacht op goed moment\". De stekker blijft aan; zet de schakelaar aan na het starten van de machine: op een goed moment loopt hij door, anders gaat de stekker uit tot zon, het beste venster of de laatste start om klaar te zijn voor 'klaar_voor'. Is later klaar duidelijk beter, dan vraagt Home EMS het eerst (event home_ems_appliance, antwoord met de service home_ems.appliance_answer). 'max_wachten' (uren) is optioneel.",
         "data": {
           "pv_power_entities": "Vermogen per omvormer (W, één sensor per omvormer)",
-          "appliances": "Witgoed (YAML: naam, kwh, duur, klaar_voor, optioneel stekker en max_wachten)"
+          "appliances": "Witgoed (YAML: naam, kwh, duur, klaar_voor, optioneel stekker, max_wachten en piek_kw, het vermogen tijdens het opwarmen van water, standaard 2)"
         }
       },
       "battery_reserve": {

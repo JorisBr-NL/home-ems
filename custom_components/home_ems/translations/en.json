@@ -385,7 +385,7 @@
         "description": "Shadow mode. Curtailment: at a negative market price Home EMS shows which inverter it would switch off (each behind its own switch), only when that inverter delivers less than the export. Appliances: the cheapest start before the ready-by time, from the price and solar forecast. With 'stekker' (the switch of the smart plug) an appliance gets a switch \"Wait for a good moment\". The plug stays on; turn the switch on after starting the machine: at a good moment it runs on, otherwise the plug goes off until solar, the best window or the latest start to be ready by 'klaar_voor'. When finishing later is clearly better, Home EMS asks first (event home_ems_appliance, answer with the service home_ems.appliance_answer). 'max_wachten' (hours) is optional.",
         "data": {
           "pv_power_entities": "Live power per inverter (W, one sensor each)",
-          "appliances": "Appliances (YAML: naam, kwh, duur, klaar_voor, optional stekker and max_wachten)"
+          "appliances": "Appliances (YAML: naam, kwh, duur, klaar_voor, optional stekker, max_wachten and piek_kw, the power while heating water, default 2)"
         }
       },
       "battery_reserve": {
