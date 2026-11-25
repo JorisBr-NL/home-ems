@@ -153,7 +153,7 @@ def test_export_csv_follows_workbook_columns():
     lines = ov.export_csv(years).splitlines()
     head = lines[0].split(";")
     assert head[:5] == ["Maand", "Dagen", "Status", "Buitentemp gem °C", "Gas m³"]
-    assert head[-3:] == ["Cum voorschot €", "Vergoeding laadpaal €/kWh", "Retour laadpaal € (apart)"]
+    assert head[21:24] == ["Cum voorschot €", "Vergoeding laadpaal €/kWh", "Retour laadpaal € (apart)"]
     rows = [line.split(";") for line in lines[1:]]
     # all settlement years in one file, oldest first; months split by a contract change
     assert rows[0][0] == "jan 2025" and rows[0][1] == "31" and rows[0][2] == "werkelijk"
@@ -302,3 +302,80 @@ def test_calendar_years_for_a_contract():
     ]
     with pytest.raises(ValueError):
         ov.parse_settings({"contracten": [{"vanaf": "2027-01-25", "jaren": "boekjaar"}]})
+
+
+# ---------------------------------------------------------------- batteries (v0.13.2)
+
+
+def test_battery_losses_do_not_count_as_house_use():
+    u = ov.Usage(import_kwh=100, export_kwh=50, pv_kwh=200, bat_in_kwh=30, bat_out_kwh=26)
+    assert u.total_kwh == 100 + 200 - 50 - 4
+    assert ov.parse_settings({"batterijen": [
+        {"naam": "a", "vanaf": "2026-11-11", "aanschaf": 1000},
+        {"naam": "b", "vanaf": "2026-11-12", "aanschaf": 1000}]}).battery_investment == 2000
+
+
+def test_battery_saving_with_net_metering_is_only_the_losses():
+    h = ov.Hour(import_kwh=1, export_kwh=0, bat_in_kwh=2, bat_out_kwh=0)
+    assert ov.battery_saving(h, 0.25, 0.05, True) == pytest.approx(-0.5)
+    h = ov.Hour(bat_in_kwh=1.0, bat_out_kwh=0.88)
+    assert ov.battery_saving(h, 0.25, 0.05, True) == pytest.approx(-0.03)
+
+
+def test_battery_saving_without_net_metering():
+    # charging from solar: without the battery those 2 kWh would have been exported
+    h = ov.Hour(import_kwh=0, export_kwh=1, bat_in_kwh=2)
+    assert ov.battery_saving(h, 0.30, 0.05, False) == pytest.approx(-0.10)
+    # discharging in the evening: without the battery 1.5 kWh more import
+    h = ov.Hour(import_kwh=0.2, export_kwh=0, bat_out_kwh=1.5)
+    assert ov.battery_saving(h, 0.30, 0.05, False) == pytest.approx(0.45)
+    # charging from the grid (reserve) costs the purchase price
+    h = ov.Hour(import_kwh=1.2, export_kwh=0, bat_in_kwh=1.0)
+    assert ov.battery_saving(h, 0.30, 0.05, False) == pytest.approx(-0.30)
+    # discharging into the grid only earns the export price
+    h = ov.Hour(import_kwh=0, export_kwh=0.5, bat_out_kwh=0.5)
+    assert ov.battery_saving(h, 0.30, 0.05, False) == pytest.approx(0.025)
+
+
+def test_battery_day_savings_use_hourly_prices_with_a_dynamic_contract():
+    s = SETTINGS   # dynamic from 2027-01-25, net metering until 2026-12-31
+    day = date(2027, 2, 1)
+    hours = {day: [
+        ov.Hour(export_kwh=1, bat_in_kwh=2, export_revenue=0.0),           # midday, sells at 0
+        ov.Hour(import_kwh=1, bat_out_kwh=1.7, import_cost=0.40),          # evening, 0.40/kWh
+    ]}
+    saved = ov.battery_day_savings(hours, s)[day]
+    # charge: 2 kWh worth the day's export price (0); discharge: 1.7 kWh at 0.40
+    assert saved == pytest.approx(1.7 * 0.40)
+    # before the dynamic contract: net metering at the fixed price
+    old = date(2026, 11, 20)
+    assert ov.battery_day_savings({old: [ov.Hour(bat_in_kwh=2, bat_out_kwh=1.8)]}, s)[old] == \
+        pytest.approx(-0.2 * 0.25)
+
+
+def test_battery_columns_in_the_exports():
+    s = ov.parse_settings({
+        "contracten": [{"naam": "A", "vanaf": "2026-01-01", "stroom": 0.25, "teruglevering": 0.05}],
+        "batterijen": [{"naam": "a", "vanaf": "2026-03-01", "aanschaf": 600}],
+    })
+    days = flat_days(date(2026, 1, 1), date(2026, 2, 28), import_kwh=10)
+    days.update(flat_days(date(2026, 3, 1), date(2026, 5, 31), import_kwh=8, bat_in_kwh=3,
+                          bat_out_kwh=2.7, bat_saving=0.5))
+    years = ov.build_overview(days, date(2026, 6, 1), s)
+    lines = ov.export_csv(years).splitlines()
+    head = lines[0].split(";")
+    assert head[-5:] == ["Batterij geladen kWh", "Batterij ontladen kWh", "Besparing batterij €",
+                         "Cum besparing batterij €", "Terugverdiend %"]
+    rows = {r.split(";")[0]: r.split(";") for r in lines[1:]}
+    assert rows["feb 2026"][-5:] == [""] * 5                  # before the batteries
+    assert rows["mrt 2026"][head.index("Batterij geladen kWh")] == "93"
+    assert rows["mrt 2026"][head.index("Besparing batterij €")] == "15,50"
+    assert rows["mei 2026"][head.index("Cum besparing batterij €")] == "46,00"
+    assert rows["mei 2026"][head.index("Terugverdiend %")] == "8%"
+    assert rows["jul 2026"][-5:] == [""] * 5                  # forecast
+    year = ov.years_csv(years).splitlines()
+    yh, y1 = year[0].split(";"), year[1].split(";")
+    assert y1[yh.index("Besparing batterij")] == "46,00"
+    assert y1[yh.index("Aanschaf batterijen")] == "600,00"
+    # 0.50 per day: 600 / (0.5 * 365) = 3.3 years
+    assert y1[yh.index("Terugverdientijd jaren")] == "3,30"

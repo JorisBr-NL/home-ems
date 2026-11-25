@@ -71,6 +71,8 @@ from .const import (
     OPT_RUN_HEADROOM,
     OPT_SOLAR_ENTITY,
     OPT_STAT_EV,
+    OPT_STAT_BATTERY_IN,
+    OPT_STAT_BATTERY_OUT,
     OPT_STAT_EXPORT,
     OPT_STAT_EXPORT_REVENUE,
     OPT_STAT_GAS,
@@ -320,6 +322,8 @@ class HomeEmsOptionsFlow(OptionsFlow):
             _optional(current, OPT_STAT_OUTSIDE): _meter(),
             _optional(current, OPT_STAT_IMPORT_COST): _statistic(),
             _optional(current, OPT_STAT_EXPORT_REVENUE): _statistic(),
+            _optional(current, OPT_STAT_BATTERY_IN): _meter(multiple=True),
+            _optional(current, OPT_STAT_BATTERY_OUT): _meter(multiple=True),
             _optional(current, OPT_OVERVIEW_FROM): selector.DateSelector(),
             _optional(current, OPT_COST_SETTINGS): selector.TextSelector(
                 selector.TextSelectorConfig(multiline=True)),

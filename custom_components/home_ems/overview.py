@@ -39,6 +39,9 @@ class Usage:
     export_revenue: float | None = None   # actual compensation from the supplier statistic
     temp_sum: float = 0.0                 # sum of daily mean outside temperatures
     temp_days: int = 0
+    bat_in_kwh: float = 0.0               # home batteries: charged (AC side)
+    bat_out_kwh: float = 0.0              # home batteries: discharged (AC side)
+    bat_saving: float | None = None       # EUR the batteries saved (hourly, see battery_saving)
 
     def __add__(self, other: Usage) -> Usage:
         def opt(a: float | None, b: float | None) -> float | None:
@@ -50,6 +53,8 @@ class Usage:
             self.hp_kwh + other.hp_kwh, self.ev_kwh + other.ev_kwh,
             opt(self.import_cost, other.import_cost), opt(self.export_revenue, other.export_revenue),
             self.temp_sum + other.temp_sum, self.temp_days + other.temp_days,
+            self.bat_in_kwh + other.bat_in_kwh, self.bat_out_kwh + other.bat_out_kwh,
+            opt(self.bat_saving, other.bat_saving),
         )
 
     def scaled(self, factor: float) -> Usage:
@@ -61,8 +66,14 @@ class Usage:
 
     @property
     def total_kwh(self) -> float:
-        """All electricity used in the house: grid import plus solar used directly."""
-        return self.import_kwh + self.pv_kwh - self.export_kwh
+        """All electricity used in the house: grid import plus solar used directly, minus
+        what went into the batteries and did not come back (losses and a fuller battery)."""
+        return self.import_kwh + self.pv_kwh - self.export_kwh - self.bat_net_kwh
+
+    @property
+    def bat_net_kwh(self) -> float:
+        """Charged minus discharged: the battery losses (plus the change in charge)."""
+        return self.bat_in_kwh - self.bat_out_kwh
 
     @property
     def general_kwh(self) -> float:
@@ -100,6 +111,13 @@ class Period:
 
 
 @dataclass(frozen=True)
+class Battery:
+    name: str
+    start: date          # in use from
+    price: float         # purchase price in EUR (with installation, if any)
+
+
+@dataclass(frozen=True)
 class CostSettings:
     contracts: tuple[Contract, ...] = ()
     net_metering_until: date = date(2026, 12, 31)
@@ -109,6 +127,7 @@ class CostSettings:
     settlements: dict[int, float] = field(default_factory=dict)   # actual final bill per year
     manual: dict[tuple[date, date], Usage] = field(default_factory=dict)  # periods entered by hand
     learn_from: dict[str, date] = field(default_factory=dict)  # per forecast quantity: first month to learn from
+    batteries: tuple[Battery, ...] = ()     # home batteries: purchase price for the payback
 
     def contract(self, day: date) -> Contract | None:
         current = None
@@ -126,6 +145,14 @@ class CostSettings:
 
     def ev_refund(self, day: date) -> float:
         return next((p.value for p in self.ev_refunds if p.active(day)), 0.0)
+
+    @property
+    def battery_investment(self) -> float:
+        return sum(b.price for b in self.batteries)
+
+    @property
+    def battery_start(self) -> date | None:
+        return min((b.start for b in self.batteries), default=None)
 
 
 def _date(value) -> date:
@@ -192,6 +219,8 @@ def parse_settings(raw: dict | None) -> CostSettings:
             manual={(span := _period_key(k)): _manual_usage(span, v)
                     for k, v in (raw.get("handmatig") or {}).items()},
             learn_from={LEARN_KEYS[k]: _date(v) for k, v in (raw.get("leren_vanaf") or {}).items()},
+            batteries=tuple(Battery(str(b.get("naam", "")), _date(b["vanaf"]), float(b.get("aanschaf", 0)))
+                            for b in raw.get("batterijen") or []),
         )
     except (KeyError, TypeError, ValueError) as err:
         raise ValueError(str(err)) from err
@@ -273,6 +302,75 @@ def day_costs(day: date, u: Usage, s: CostSettings) -> Costs:
         power = u.import_kwh * c.import_price - u.export_kwh * c.export_price
     fixed = c.fixed_per_day - c.monthly_discount * 12 / 365
     return Costs(fixed, u.gas_m3 * c.gas_price, power, -u.ev_kwh * s.ev_refund(day))
+
+
+# ---------------------------------------------------------------- batteries
+
+
+@dataclass(frozen=True)
+class Hour:
+    """Energy of one hour (changes of the hourly statistics)."""
+
+    import_kwh: float = 0.0
+    export_kwh: float = 0.0
+    bat_in_kwh: float = 0.0
+    bat_out_kwh: float = 0.0
+    import_cost: float | None = None
+    export_revenue: float | None = None
+
+
+def battery_saving(h: Hour, buy: float, sell: float, net_metering: bool) -> float:
+    """What the batteries saved in one hour (negative: they cost money).
+
+    Without the batteries the house would have used the same, so the grid would have
+    seen the battery power the other way round. With net metering every kWh counts at
+    the purchase price, so only the difference between charged and discharged counts
+    (the losses cost money). Without net metering, discharging first undoes export it
+    caused and then saves import; charging first undoes import it caused and then
+    stands for export the house did not do. Within an hour this order is a best guess."""
+    if net_metering:
+        return (h.bat_out_kwh - h.bat_in_kwh) * buy
+    delta = h.bat_out_kwh - h.bat_in_kwh   # > 0: the batteries supplied the house this hour
+    imp0, exp0 = h.import_kwh, h.export_kwh
+    if delta > 0:
+        undo = min(delta, exp0)
+        exp0, imp0 = exp0 - undo, imp0 + delta - undo
+    else:
+        undo = min(-delta, imp0)
+        imp0, exp0 = imp0 - undo, exp0 - delta - undo
+    with_bat = h.import_kwh * buy - h.export_kwh * sell
+    without = imp0 * buy - exp0 * sell
+    return without - with_bat
+
+
+def _unit_price(amount: float | None, kwh: float, fallback: float) -> float:
+    return amount / kwh if amount is not None and kwh >= 0.05 else fallback
+
+
+def battery_day_savings(hours: dict[date, list[Hour]], s: CostSettings) -> dict[date, float]:
+    """Saving of the batteries per day, hour by hour. Prices: the contract prices, or with
+    a dynamic contract after net metering the actual price of each hour (cost / kWh from
+    the supplier statistics); an hour without import or export gets the mean of its day."""
+    out: dict[date, float] = {}
+    for day, day_hours in hours.items():
+        c = s.contract(day)
+        if c is None:
+            continue
+        metering = day <= s.net_metering_until
+        buy, sell = c.import_price, c.export_price
+        if c.dynamic and not metering:
+            costs = [h.import_cost for h in day_hours if h.import_cost is not None]
+            revenues = [h.export_revenue for h in day_hours if h.export_revenue is not None]
+            imp = sum(h.import_kwh for h in day_hours if h.import_cost is not None)
+            exp = sum(h.export_kwh for h in day_hours if h.export_revenue is not None)
+            buy = _unit_price(sum(costs) if costs else None, imp, buy)
+            sell = _unit_price(sum(revenues) if revenues else None, exp, sell)
+        out[day] = sum(
+            battery_saving(h, _unit_price(h.import_cost, h.import_kwh, buy) if c.dynamic and not metering else buy,
+                           _unit_price(h.export_revenue, h.export_kwh, sell) if c.dynamic and not metering else sell,
+                           metering)
+            for h in day_hours)
+    return out
 
 
 # ---------------------------------------------------------------- forecast
@@ -437,6 +535,7 @@ class MonthRow:
     first_day: int = 1   # rows of a month split by a contract change cover only part of it
     last_day: int = 0    # 0 = until the end of the month
     net_metering: bool = True  # the whole row falls under net metering
+    bat_days: int = 0          # actual days with the batteries in use (for the payback pace)
 
     @property
     def partial(self) -> bool:
@@ -458,6 +557,8 @@ class MonthRow:
             "mean_temp": round(u.mean_temp, 1) if u.mean_temp is not None else None,
             "fixed": round(c.fixed, 2), "gas_cost": round(c.gas, 2), "power_cost": round(c.power, 2),
             "ev_refund": round(c.ev_refund, 2), "total": round(c.total, 2), "advance": round(self.advance, 2),
+            "battery_in_kwh": round(u.bat_in_kwh), "battery_out_kwh": round(u.bat_out_kwh),
+            "battery_saving": round(u.bat_saving, 2) if u.bat_saving is not None else None,
         }
 
 
@@ -472,6 +573,7 @@ class YearSummary:
     rows: tuple[MonthRow, ...]
     cashback: float
     settlement: float | None
+    battery_investment: float = 0.0
 
     @property
     def year(self) -> int:
@@ -503,6 +605,11 @@ class YearSummary:
         return sum(r.advance for r in self.rows)
 
     @property
+    def battery_saving(self) -> float | None:
+        values = [r.usage.bat_saving for r in self.rows if r.usage.bat_saving is not None]
+        return sum(values) if values else None
+
+    @property
     def complete(self) -> bool:
         return all(r.status == "actual" for r in self.rows)
 
@@ -532,7 +639,10 @@ class YearSummary:
             "costs": round(self.costs, 2), "net_costs": round(self.net_costs, 2),
             # positive: pay extra at the final bill; negative: money back
             "expected_settlement": round(self.costs - self.advances, 2),
-            "settlement": self.settlement, "months": months,
+            "settlement": self.settlement,
+            "battery_in_kwh": round(u.bat_in_kwh), "battery_out_kwh": round(u.bat_out_kwh),
+            "battery_saving": round(self.battery_saving, 2) if self.battery_saving is not None else None,
+            "months": months,
         }
 
 
@@ -607,13 +717,16 @@ def build_overview(days: dict[date, Usage], today: date, s: CostSettings) -> lis
                 usage, costs = usage + u, costs + day_costs(d, u, s)
             month_end = m + timedelta(days=n - 1)
             advance = s.advance(m) if last == month_end else 0.0
+            bat_days = sum(1 for d in span if d < today and s.battery_start is not None
+                           and d >= s.battery_start)
             rows.append(MonthRow(m, status, usage, costs, advance, first.day,
-                                 0 if last == month_end else last.day, last <= s.net_metering_until))
+                                 0 if last == month_end else last.day, last <= s.net_metering_until,
+                                 bat_days))
             m = add_months(m, 1)
         rows = _net_metering_surplus(rows, s)
         if rows:
             years.append(YearSummary(start, end, name, tuple(rows), s.cashback.get(start.year, 0.0),
-                                     s.settlements.get(start.year)))
+                                     s.settlements.get(start.year), s.battery_investment))
     return years
 
 
@@ -662,7 +775,17 @@ EXPORT_COLUMNS = (
     ("Vergoeding laadpaal €/kWh", lambda r, c: _num(-r.costs.ev_refund / r.usage.ev_kwh
                                                      if r.usage.ev_kwh > 0 else 0.0, 4)),
     ("Retour laadpaal € (apart)", lambda r, c: _num(r.costs.ev_refund, 2)),
+    # home batteries (empty for forecast months and before the batteries)
+    ("Batterij geladen kWh", lambda r, c: _bat(r, _num(r.usage.bat_in_kwh, 0))),
+    ("Batterij ontladen kWh", lambda r, c: _bat(r, _num(r.usage.bat_out_kwh, 0))),
+    ("Besparing batterij €", lambda r, c: _bat(r, _num(r.usage.bat_saving, 2))),
+    ("Cum besparing batterij €", lambda r, c: _bat(r, _num(c[2], 2))),
+    ("Terugverdiend %", lambda r, c: _bat(r, f"{c[2] / c[3]:.0%}" if c[3] > 0 else "")),
 )
+
+
+def _bat(r: MonthRow, text: str) -> str:
+    return text if r.status != "forecast" and r.usage.bat_saving is not None else ""
 
 
 def export_csv(years: list[YearSummary]) -> str:
@@ -670,24 +793,62 @@ def export_csv(years: list[YearSummary]) -> str:
     workbook. Semicolon separated with a decimal comma, so Dutch Excel opens it
     directly. The cumulative columns restart with every settlement year."""
     lines = [";".join(h for h, _ in EXPORT_COLUMNS)]
+    bat, investment = 0.0, years[0].battery_investment if years else 0.0
     for y in years:
         cum = [0.0, 0.0]
         for r in y.rows:
-            cum = [cum[0] + r.costs.total, cum[1] + r.advance]
+            bat += r.usage.bat_saving or 0.0       # since the first battery, not per year
+            cum = [cum[0] + r.costs.total, cum[1] + r.advance, bat, investment]
             lines.append(";".join(fn(r, cum) for _, fn in EXPORT_COLUMNS))
     return "\n".join(lines) + "\n"
+
+
+def battery_payback_years(years: list[YearSummary], upto: YearSummary) -> float | None:
+    """Years from the first battery day until the savings equal the purchase price, at the
+    pace of the actual savings so far (up to and including the year `upto`): saving per day
+    over the last 365 days with data, or over all days if there are fewer (then the season
+    weighs in: a start in winter gives a long payback time at first)."""
+    rows: list[MonthRow] = []
+    for y in years:
+        rows += [r for r in y.rows if r.bat_days and r.usage.bat_saving is not None]
+        if y is upto:
+            break
+    saving = days = 0.0
+    for r in reversed(rows):              # the most recent months, up to a year
+        if days >= 365:
+            break
+        saving, days = saving + r.usage.bat_saving, days + r.bat_days
+    if days <= 0 or saving <= 0 or upto.battery_investment <= 0:
+        return None
+    return upto.battery_investment / (saving / days * 365)
 
 
 def years_csv(years: list[YearSummary]) -> str:
     head = ("Jaar;Van;Tot;Contract;Compleet;Gas m3;Opwek kWh;Teruglevering kWh;Afname kWh;Verbruik totaal kWh;"
             "Algemeen kWh;Warmtepomp kWh;Laadpaal kWh;Eigen verbruik %;Voorschotten;Cashback;Retour laadpaal;"
-            "Totale kosten;Verwachte afrekening;Volgens afrekening;Netto kosten")
+            "Totale kosten;Verwachte afrekening;Volgens afrekening;Netto kosten;"
+            "Batterij geladen kWh;Batterij ontladen kWh;Besparing batterij;Cum besparing batterij;"
+            "Aanschaf batterijen;Terugverdiend %;Terugverdientijd jaren")
     keys = ("year", "from", "to", "contract", "complete", "gas_m3", "pv_kwh", "export_kwh", "import_kwh", "total_kwh",
             "general_kwh", "heat_pump_kwh", "ev_kwh", "own_use_pct", "advances", "cashback", "ev_refund",
-            "costs", "expected_settlement", "settlement", "net_costs")
+            "costs", "expected_settlement", "settlement", "net_costs",
+            "battery_in_kwh", "battery_out_kwh", "battery_saving", "battery_cum", "battery_investment",
+            "battery_paid_pct", "battery_payback_years")
     out = [head]
+    cum = 0.0
     for y in years:
         d = y.as_dict()
+        d.update(battery_cum=None, battery_investment=None, battery_paid_pct=None, battery_payback_years=None)
+        if y.battery_saving is not None:
+            cum += y.battery_saving
+            d["battery_cum"] = round(cum, 2)
+            if y.battery_investment > 0:
+                d["battery_investment"] = round(y.battery_investment, 2)
+                d["battery_paid_pct"] = round(cum / y.battery_investment * 100)
+                payback = battery_payback_years(years, y)
+                d["battery_payback_years"] = round(payback, 1) if payback is not None else None
+        else:
+            d["battery_in_kwh"] = d["battery_out_kwh"] = None
         out.append(";".join("" if d[k] is None else
                             (f"{d[k]:.2f}".replace(".", ",") if isinstance(d[k], float) else
                              ("ja" if d[k] is True else "nee" if d[k] is False else str(d[k])))
@@ -696,4 +857,5 @@ def years_csv(years: list[YearSummary]) -> str:
 
 
 __all__ = ["settlement_years", "clean_daily", "apply_manual", "Usage", "Contract", "Period", "CostSettings", "parse_settings", "Costs", "day_costs",
-           "Forecaster", "MonthRow", "YearSummary", "build_overview", "export_csv", "years_csv", "replace"]
+           "Forecaster", "MonthRow", "YearSummary", "build_overview", "export_csv", "years_csv", "replace",
+           "Battery", "Hour", "battery_saving", "battery_day_savings", "battery_payback_years"]

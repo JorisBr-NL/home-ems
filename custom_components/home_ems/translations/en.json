@@ -419,8 +419,10 @@
           "stat_outside": "Outside temperature",
           "stat_import_cost": "Actual purchase cost (EUR, dynamic contract)",
           "stat_export_revenue": "Actual export compensation (EUR, dynamic contract)",
+          "stat_battery_in": "Battery energy charged (kWh, one per battery)",
+          "stat_battery_out": "Battery energy discharged (kWh, one per battery)",
           "overview_from": "Overview from",
-          "cost_settings": "Contracts, advances, wallbox refund, cashback, hand-entered periods (YAML)",
+          "cost_settings": "Contracts, advances, wallbox refund, cashback, hand-entered periods, batteries (YAML)",
           "export_dir": "Folder for the CSV files"
         }
       }
