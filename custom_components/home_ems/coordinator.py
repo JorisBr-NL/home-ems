@@ -760,7 +760,20 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
                           deadline: datetime | None = None) -> StartAdvice | None:
         if not self._slots:
             return None
-        return best_start(self._slots, now, appliance, float(self.option(OPT_BASE_LOAD)), deadline)
+        return best_start(self._slots, now, appliance, float(self.option(OPT_BASE_LOAD)), deadline,
+                          self._planned_heat_pump_load())
+
+    def _planned_heat_pump_load(self) -> dict[datetime, float]:
+        """Electric power of the planned heat pump runs per quarter start (kW): solar that
+        goes into the heat pump is not there for an appliance (heat first)."""
+        load: dict[datetime, float] = {}
+        for run in (self.plan.runs if self.plan else ()):
+            quarters = max(1, round((run.end - run.start) / QUARTER))
+            kw = run.el_kwh / (quarters * QUARTER.total_seconds() / 3600)
+            for q in range(quarters):
+                moment = run.start + q * QUARTER
+                load[moment] = load.get(moment, 0.0) + kw
+        return load
 
     @staticmethod
     def _minute(moment: datetime | None) -> str | None:
@@ -864,7 +877,9 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
     def _advise_appliances(self, now: datetime) -> None:
         items = self.appliances()
         base = float(self.option(OPT_BASE_LOAD))
-        self.appliance_advice = [best_start(self._slots, now, a, base) for a in items] if self._slots else []
+        extra = self._planned_heat_pump_load()
+        self.appliance_advice = ([best_start(self._slots, now, a, base, None, extra) for a in items]
+                                 if self._slots else [])
 
     # ------------------------------------------------------------ executor (v0.6)
 

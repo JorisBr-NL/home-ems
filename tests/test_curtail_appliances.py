@@ -116,3 +116,41 @@ def test_parse_appliances():
     assert items[0].ready_by == time(7, 0) and items[0].hours == 2.5
     with pytest.raises(ValueError):
         appliances.parse_appliances([{"kwh": 1}])
+
+
+# ---------------------------------------------------------------- v0.13.1: solar window
+
+def _sunny_day(flat: bool = True):
+    """25 Nov: a fixed tariff (every quarter the same price and export value) and a solar
+    forecast that rises from a weak morning to a sunny midday."""
+    day = datetime(2026, 11, 25, 0, 0, tzinfo=timezone.utc)      # local = UTC + 1
+    pv = {7: 0.3, 8: 0.9, 9: 1.4, 10: 1.8, 11: 1.9, 12: 1.5, 13: 0.9, 14: 0.3}   # UTC hours
+    return [planner.Slot(day + i * planner.QUARTER, 0.30, market=0.30 if flat else 0.10,
+                         pv_kw=pv.get((day + i * planner.QUARTER).hour, 0.0)) for i in range(96)]
+
+
+def test_dishwasher_profile_heats_first():
+    dish = appliances.Appliance("Vaatwasser", kwh=1.1, hours=2.5)
+    profile = dish.profile()
+    assert len(profile) == 10 and profile[0] == profile[1] == 2.0
+    assert abs(sum(profile) * 0.25 - 1.1) < 1e-9          # the energy stays the same
+
+
+def test_fixed_tariff_picks_the_sunniest_window_not_the_first_covered_one():
+    dish = appliances.Appliance("Vaatwasser", kwh=1.1, hours=2.5, ready_by=time(17, 0))
+    evening = datetime(2026, 11, 24, 20, 0, tzinfo=timezone.utc)    # armed the evening before
+    slots = _sunny_day()
+    advice = appliances.best_start(slots, evening, dish, 0.4)
+    local_start = advice.start + timedelta(hours=1)
+    assert 10 <= local_start.hour <= 12, local_start             # not 09:00
+
+
+def test_planned_heat_pump_runs_take_the_morning_sun_first():
+    dish = appliances.Appliance("Vaatwasser", kwh=1.1, hours=2.5, ready_by=time(17, 0))
+    evening = datetime(2026, 11, 24, 20, 0, tzinfo=timezone.utc)
+    slots = _sunny_day()
+    # the heat pump runs 08:00-11:00 local at 1.2 kW
+    hp = {s.start: 1.2 for s in slots if 7 <= s.start.hour < 10}
+    advice = appliances.best_start(slots, evening, dish, 0.4, None, hp)
+    assert advice.start.hour >= 10                                # after the heat pump run (UTC)
+    assert advice.pv_share is not None and advice.pv_share > 0.5
