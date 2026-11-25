@@ -93,13 +93,16 @@ OPT_STAT_EV = "stat_ev"                    # wallbox kWh
 OPT_STAT_OUTSIDE = "stat_outside"          # outside temperature (mean per day)
 OPT_STAT_IMPORT_COST = "stat_import_cost"  # actual purchase cost EUR (dynamic contract, e.g. Tibber)
 OPT_STAT_EXPORT_REVENUE = "stat_export_revenue"  # actual export compensation EUR
+OPT_STAT_BATTERY_IN = "stat_battery_in"    # home batteries: energy charged kWh (one per battery)
+OPT_STAT_BATTERY_OUT = "stat_battery_out"  # home batteries: energy discharged kWh (one per battery)
 OPT_COST_SETTINGS = "cost_settings"        # YAML: contracts, advances, wallbox refund, cashback
 OPT_OVERVIEW_FROM = "overview_from"        # first day of the overview
 OPT_EXPORT_DIR = "export_dir"              # folder for the CSV files
 
 OVERVIEW_OPTIONS = (
     OPT_STAT_IMPORT, OPT_STAT_EXPORT, OPT_STAT_PV, OPT_STAT_GAS, OPT_STAT_HEAT_PUMP, OPT_STAT_EV,
-    OPT_STAT_OUTSIDE, OPT_STAT_IMPORT_COST, OPT_STAT_EXPORT_REVENUE, OPT_COST_SETTINGS,
+    OPT_STAT_OUTSIDE, OPT_STAT_IMPORT_COST, OPT_STAT_EXPORT_REVENUE, OPT_STAT_BATTERY_IN,
+    OPT_STAT_BATTERY_OUT, OPT_COST_SETTINGS,
     OPT_OVERVIEW_FROM, OPT_EXPORT_DIR,
 )
 
@@ -119,6 +122,11 @@ voorschotten:
 laadpaal_vergoeding: []
 cashback: {}
 afrekening: {}
+# thuisbatterijen: aanschafprijs voor de terugverdientijd (besparing komt uit de statistieken)
+batterijen: []
+#  - naam: Batterij 1
+#    vanaf: 2026-11-01
+#    aanschaf: 1000
 """
 
 # options (v0.6): control, the executor that writes the target setpoint (own screen,
