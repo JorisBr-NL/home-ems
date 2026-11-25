@@ -419,8 +419,10 @@
           "stat_outside": "Buitentemperatuur",
           "stat_import_cost": "Werkelijke inkoopkosten (EUR, dynamisch contract)",
           "stat_export_revenue": "Werkelijke terugleververgoeding (EUR, dynamisch contract)",
+          "stat_battery_in": "Batterij geladen energie (kWh, een per batterij)",
+          "stat_battery_out": "Batterij ontladen energie (kWh, een per batterij)",
           "overview_from": "Overzicht vanaf",
-          "cost_settings": "Contracten, voorschotten, laadpaalvergoeding, cashback, handmatige perioden (YAML)",
+          "cost_settings": "Contracten, voorschotten, laadpaalvergoeding, cashback, handmatige perioden, batterijen (YAML)",
           "export_dir": "Map voor de CSV-bestanden"
         }
       }

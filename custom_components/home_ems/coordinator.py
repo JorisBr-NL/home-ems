@@ -85,6 +85,8 @@ from .const import (
     OPT_RUN_HEADROOM,
     OPT_SOLAR_ENTITY,
     OPT_STAT_EV,
+    OPT_STAT_BATTERY_IN,
+    OPT_STAT_BATTERY_OUT,
     OPT_STAT_EXPORT,
     OPT_STAT_EXPORT_REVENUE,
     OPT_STAT_GAS,
@@ -145,7 +147,9 @@ from .model import (
     pv_forecast_ok,
 )
 from .overview import (
+    Hour,
     Usage,
+    battery_day_savings,
     YearSummary,
     apply_manual,
     build_overview,
@@ -176,7 +180,10 @@ STAT_ROLES = {
     "import": OPT_STAT_IMPORT, "export": OPT_STAT_EXPORT, "pv": OPT_STAT_PV, "gas": OPT_STAT_GAS,
     "hp": OPT_STAT_HEAT_PUMP, "ev": OPT_STAT_EV, "temp": OPT_STAT_OUTSIDE,
     "import_cost": OPT_STAT_IMPORT_COST, "export_revenue": OPT_STAT_EXPORT_REVENUE,
+    "bat_in": OPT_STAT_BATTERY_IN, "bat_out": OPT_STAT_BATTERY_OUT,
 }
+# roles of the hourly statistics for the battery saving
+HOUR_ROLES = ("import", "export", "bat_in", "bat_out", "import_cost", "export_revenue")
 
 
 def _row_day(start: float | datetime) -> date:
@@ -1255,6 +1262,17 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
         start = dt_util.start_of_local_day(start_day)
         # statistics from `overview_from` on; hand-entered periods may lie before it
         days = apply_manual(await self._async_daily_usage(roles, start, now), settings.manual)
+        if days and (roles["bat_in"] or roles["bat_out"]):
+            try:
+                begin = max(start, dt_util.start_of_local_day(settings.battery_start)
+                            if settings.battery_start else start)
+                saved = battery_day_savings(await self._async_hourly(roles, begin, now), settings)
+            except Exception:  # the battery saving must never take the overview down
+                _LOGGER.exception("Could not work out the battery saving")
+                saved = {}
+            for day, value in saved.items():
+                if day in days and day < now.date():
+                    days[day] = replace(days[day], bat_saving=value)
         if not days:
             self.overview, self.overview_status = [], OVERVIEW_NO_DATA
             return
@@ -1305,9 +1323,38 @@ class HomeEmsCoordinator(DataUpdateCoordinator[Evaluation]):
                 import_kwh=v.get("import", 0.0), export_kwh=v.get("export", 0.0),
                 pv_kwh=v.get("pv", 0.0), gas_m3=v.get("gas", 0.0), hp_kwh=v.get("hp", 0.0),
                 ev_kwh=v.get("ev", 0.0), import_cost=v.get("import_cost"),
+                bat_in_kwh=v.get("bat_in", 0.0), bat_out_kwh=v.get("bat_out", 0.0),
                 export_revenue=v.get("export_revenue"),
                 temp_sum=v.get("temp", 0.0), temp_days=1 if "temp" in v else 0,
             )
+        return out
+
+    async def _async_hourly(self, roles: dict[str, list[str]], start: datetime,
+                            end: datetime) -> dict[date, list[Hour]]:
+        """Hourly changes of grid, battery and cost statistics, grouped per local day."""
+        ids = {i for role in HOUR_ROLES for i in roles[role]}
+        changes = await get_instance(self.hass).async_add_executor_job(
+            statistics_during_period, self.hass, start, end, ids, "hour",
+            {"energy": "kWh"}, {"change"})
+        hours: dict[datetime, dict[str, float]] = {}
+        for role in HOUR_ROLES:
+            for stat_id in roles[role]:
+                for row in changes.get(stat_id, []):
+                    if row.get("change") is None:
+                        continue
+                    moment = row["start"]
+                    moment = moment if isinstance(moment, datetime) else dt_util.utc_from_timestamp(moment)
+                    values = hours.setdefault(moment, {})
+                    # a meter that briefly went back or jumped is not a real hour of use
+                    value = float(row["change"])
+                    if role not in ("import_cost", "export_revenue") and not 0 <= value <= 50:
+                        value = 0.0
+                    values[role] = values.get(role, 0.0) + value
+        out: dict[date, list[Hour]] = {}
+        for moment, v in sorted(hours.items()):
+            out.setdefault(dt_util.as_local(moment).date(), []).append(Hour(
+                v.get("import", 0.0), v.get("export", 0.0), v.get("bat_in", 0.0), v.get("bat_out", 0.0),
+                v.get("import_cost"), v.get("export_revenue")))
         return out
 
     def _pv_forecast_ok(self, now: datetime) -> bool:
